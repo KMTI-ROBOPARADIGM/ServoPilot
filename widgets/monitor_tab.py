@@ -56,6 +56,7 @@ class MonitorTab(QWidget):
         super().__init__(parent)
         self._servo_id: int = -1
         self._block_slider = False
+        self._torque_on: bool = False   # track torque state per servo
         self._build_ui()
 
     # ── Build UI ─────────────────────────────────────────────────────
@@ -144,6 +145,16 @@ class MonitorTab(QWidget):
         self._send_pos_btn.clicked.connect(self._send_position)
         pos_spin_row.addWidget(self._send_pos_btn)
         gp_v.addLayout(pos_spin_row)
+
+        # Torque warning label (hidden by default)
+        self._torque_warn = QLabel("⚠  Enable Torque first!")
+        self._torque_warn.setStyleSheet(
+            "color: #f0c000; font-weight: bold; font-size: 11px; "
+            "background: #2a2000; border-radius: 4px; padding: 3px 8px;"
+        )
+        self._torque_warn.setAlignment(Qt.AlignCenter)
+        self._torque_warn.setVisible(False)
+        gp_v.addWidget(self._torque_warn)
         ctrl_row.addWidget(gp_box, stretch=3)
 
         # Right panel: Speed / Acc / Mode
@@ -213,6 +224,11 @@ class MonitorTab(QWidget):
     # ── API ───────────────────────────────────────────────────────────
     def set_servo(self, servo_id: int):
         self._servo_id = servo_id
+        self._torque_on = False           # assume torque OFF until confirmed
+        self._torque_btn.setChecked(False)
+        self._torque_btn.setText("⚡ Torque ON")
+        self._torque_btn.setObjectName("btn_success")
+        self._torque_warn.setVisible(False)
         self._banner.setVisible(False)
         self._content.setVisible(True)
         self._title_lbl.setText(f"Servo #{servo_id}")
@@ -247,12 +263,20 @@ class MonitorTab(QWidget):
             self._pos_slider.setValue(val)
 
     def _send_position(self):
-        if self._servo_id >= 0:
-            self.goal_position_changed.emit(self._servo_id, self._pos_spin.value())
+        if self._servo_id < 0:
+            return
+        if not self._torque_on:
+            self._flash_torque_warning()
+            return
+        self.goal_position_changed.emit(self._servo_id, self._pos_spin.value())
 
     def _send_speed(self):
-        if self._servo_id >= 0:
-            self.goal_speed_changed.emit(self._servo_id, self._speed_spin.value())
+        if self._servo_id < 0:
+            return
+        if not self._torque_on:
+            self._flash_torque_warning()
+            return
+        self.goal_speed_changed.emit(self._servo_id, self._speed_spin.value())
 
     def _send_acc(self):
         if self._servo_id >= 0:
@@ -262,7 +286,23 @@ class MonitorTab(QWidget):
         if self._servo_id >= 0:
             self.mode_changed.emit(self._servo_id, self._mode_combo.currentIndex())
 
+    def _flash_torque_warning(self):
+        """Briefly show the torque-not-enabled warning."""
+        self._torque_warn.setVisible(True)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(2500, lambda: self._torque_warn.setVisible(False))
+
     def _torque_toggled(self, checked: bool):
         if self._servo_id >= 0:
+            self._torque_on = checked
             self.torque_toggled.emit(self._servo_id, checked)
-            self._torque_btn.setText("⚡ Torque ON" if checked else "⚡ Torque OFF")
+            if checked:
+                self._torque_btn.setText("⚡ Torque ON")
+                self._torque_btn.setObjectName("btn_success")
+                self._torque_warn.setVisible(False)
+            else:
+                self._torque_btn.setText("⚡ Torque OFF")
+                self._torque_btn.setObjectName("btn_danger")
+            # force style refresh
+            self._torque_btn.style().unpolish(self._torque_btn)
+            self._torque_btn.style().polish(self._torque_btn)

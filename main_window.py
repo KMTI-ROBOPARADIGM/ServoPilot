@@ -3,7 +3,7 @@
 import sys
 from PySide6.QtWidgets import (
     QMainWindow, QDockWidget, QTabWidget, QWidget,
-    QLabel, QApplication, QMessageBox, QStatusBar, QToolBar,
+    QLabel, QApplication, QMessageBox, QStatusBar, QToolBar, QPushButton,
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QFont, QIcon
@@ -106,6 +106,15 @@ class ServoPilotMainWindow(QMainWindow):
         sb.addWidget(self._sb_count)
         sb.addPermanentWidget(self._sb_servo)
 
+        # Console toggle button — always visible in status bar
+        self._console_toggle_btn = QPushButton("Console ▲")
+        self._console_toggle_btn.setObjectName("btn_flat")
+        self._console_toggle_btn.setFixedHeight(20)
+        self._console_toggle_btn.setCheckable(True)
+        self._console_toggle_btn.setChecked(False)   # starts collapsed
+        self._console_toggle_btn.toggled.connect(self._toggle_console)
+        sb.addPermanentWidget(self._console_toggle_btn)
+
     def _build_central(self):
         self._tabs = QTabWidget()
         self._tabs.setTabPosition(QTabWidget.North)
@@ -142,15 +151,16 @@ class ServoPilotMainWindow(QMainWindow):
 
     def _build_bottom_dock(self):
         self._console = PacketConsole()
-        dock = QDockWidget("PACKET CONSOLE", self)
-        dock.setObjectName("console_dock")
-        dock.setWidget(self._console)
-        dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
-        dock.setFeatures(
+        self._console_dock = QDockWidget("PACKET CONSOLE", self)
+        self._console_dock.setObjectName("console_dock")
+        self._console_dock.setWidget(self._console)
+        self._console_dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
+        self._console_dock.setFeatures(
             QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable
         )
-        dock.setMaximumHeight(220)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self._console_dock.setMaximumHeight(220)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self._console_dock)
+        self._console_dock.setVisible(False)  # starts collapsed
 
     # ── Wire backend signals ──────────────────────────────────────────
     def _wire_backend(self):
@@ -298,6 +308,11 @@ class ServoPilotMainWindow(QMainWindow):
         self._telemetry_hz = hz
         if self._telemetry_timer.isActive():
             self._telemetry_timer.start(int(1000 / hz))
+
+    # ── Console toggle ────────────────────────────────────────────────
+    def _toggle_console(self, checked: bool):
+        self._console_dock.setVisible(checked)
+        self._console_toggle_btn.setText("Console ▼" if checked else "Console ▲")
 
     # ── Menu actions ──────────────────────────────────────────────────
     def _request_scan(self):

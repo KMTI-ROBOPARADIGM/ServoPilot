@@ -67,10 +67,11 @@ class ServoListPanel(QWidget):
         port_row.addWidget(QLabel("Port:"))
         port_row.addWidget(self._port_combo)
 
-        self._refresh_btn = QPushButton("⟳")
+        self._refresh_btn = QPushButton("↺")
         self._refresh_btn.setObjectName("btn_flat")
-        self._refresh_btn.setFixedWidth(28)
+        self._refresh_btn.setFixedWidth(32)
         self._refresh_btn.setToolTip("Refresh port list")
+        self._refresh_btn.setStyleSheet("font-size: 16px; font-weight: bold; padding: 0px;")
         self._refresh_btn.clicked.connect(self._refresh_ports)
         port_row.addWidget(self._refresh_btn)
         layout.addLayout(port_row)
