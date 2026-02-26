@@ -175,6 +175,9 @@ class ServoPilotMainWindow(QMainWindow):
         b.log_message.connect(self._console.append_log)
         b.error_occurred.connect(self._on_error)
         b.id_changed.connect(self._on_id_changed)
+        b.pid_values.connect(
+            lambda sid, p, i, d: self._pid_tab.set_pid_values(p, i, d)
+        )
 
     # ── Wire widget signals to backend ────────────────────────────────
     def _wire_widgets(self):
@@ -240,6 +243,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._active_servo_id = -1
         self._monitor_tab.clear_servo()
         self._graph_tab.clear_servos()
+        self._pid_tab.clear_servos()   # reset PID servo selector
         self._sb_conn.setText("● Disconnected")
         self._sb_conn.setStyleSheet("color: #484f58; margin: 0 8px;")
         self._sb_port.setText("")
@@ -252,6 +256,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._sb_count.setText(f"{len(ids)} servo{'s' if len(ids)!=1 else ''}")
         for sid in ids:
             self._graph_tab.register_servo(sid)
+            self._pid_tab.add_servo(sid)   # populate PID servo selector
         if ids:
             self._on_servo_selected(ids[0])
             self._telemetry_timer.start(int(1000 / self._telemetry_hz))

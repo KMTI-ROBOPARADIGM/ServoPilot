@@ -58,11 +58,22 @@ Live multi-metric plotter powered by **pyqtgraph**:
   - `error = goal_position − position` so you can immediately see undershoot/overshoot
 
 ### 🎛️ PID Tuning Tab
-Step-response visualizer for servo tuning:
-- **Goal vs Actual position overlay** — see exactly how the servo tracks a command
-- **Error trace** — quantify overshoot, undershoot, oscillation, and settling time
-- **P / I / D gain inputs** with read-from-servo and write-to-servo buttons
-- Useful for tuning: increase **P** for faster response, add **D** to damp oscillation, add **I** to eliminate steady-state error
+Real hardware PID controller tuning for ST3215 servos:
+- **Independent servo selector** — pick which servo to tune without changing the global selection
+- **Auto-read on selection** — switching to a servo instantly loads its current P/I/D values from hardware; no need to press "Read from Servo" manually
+- **Read from Servo** button — manually refresh P/I/D spinboxes from the servo's EEPROM
+- **Write to Servo (EEPROM)** — permanently saves P/I/D gains to the servo's internal EEPROM; values survive power cycles and take effect immediately
+- **Gain reference**:
+  - 📈 **P (Proportional)** — higher = faster response, may oscillate
+  - 〽️ **I (Integral)** — corrects steady-state error, can cause overshoot if too high
+  - 📉 **D (Derivative)** — dampens oscillation, reduces P-induced overshoot
+- **Restore Defaults** — resets spinboxes to factory values (P=32, I=0, D=16) without writing to the servo
+- **Live Step-Response Graph**:
+  - **10-second sliding window** — graph always shows the most recent data in frame; old data scrolls off the left
+  - **Actual position** (bright green) vs **Goal position** (gold dashed) clearly distinguishable on the dark theme
+  - **Smart Y-axis** — guaranteed minimum 20-step visible span so small position changes are clearly visible; auto-fits around real data range
+  - See the direct effect of your P/I/D changes — overshoot, oscillation, and settling time all visible in the response shape
+
 
 ### 📋 Control Table Tab
 Full hardware register viewer/editor:

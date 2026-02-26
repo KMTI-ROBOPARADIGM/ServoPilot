@@ -106,6 +106,7 @@ class _HardwareWorker(QObject):
     id_changed        = Signal(int, int)     # old, new
     baud_changed      = Signal(int, int)     # id, code
     motion_finished   = Signal(int)          # servo id
+    pid_values        = Signal(int, int, int, int)  # servo_id, P, I, D
 
     def __init__(self):
         super().__init__()
@@ -267,30 +268,39 @@ class _HardwareWorker(QObject):
     # ── PID ─────────────────────────────────────────────────────────
     @Slot(int, int, int, int)
     def write_pid(self, servo_id: int, p: int, i: int, d: int):
-        """ST3215 PID lives at addresses 21(P), 22(I), 23(D) — write individually."""
+        """Write P/I/D to EEPROM addresses 21/22/23 using write1ByteTxOnly.
+        Must use TxOnly (no response expected) for EEPROM writes — same pattern
+        as LockEprom/UnLockEprom/ChangeId in the ST3215 library."""
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
             s = self._servo
-            # Unlock EEPROM, write P/I/D, re-lock
             s.UnLockEprom(servo_id)
-            s.writeTxRx(servo_id, 21, 1, [p])
-            s.writeTxRx(servo_id, 22, 1, [i])
-            s.writeTxRx(servo_id, 23, 1, [d])
+            time.sleep(0.01)  # small settle after unlock
+            s.write1ByteTxOnly(servo_id, 21, p)
+            time.sleep(0.005)
+            s.write1ByteTxOnly(servo_id, 22, i)
+            time.sleep(0.005)
+            s.write1ByteTxOnly(servo_id, 23, d)
+            time.sleep(0.01)  # settle before re-lock
             s.LockEprom(servo_id)
-            self.log_message.emit(f"[PID] ID={servo_id} P={p} I={i} D={d}")
+            self.log_message.emit(f"[PID WRITE] ID={servo_id} P={p} I={i} D={d} → EEPROM OK")
 
     @Slot(int)
     def read_pid(self, servo_id: int):
+        """Read P/I/D values and emit pid_values signal so the UI can update."""
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
             s = self._servo
-            p, _, _ = s.read1ByteTxRx(servo_id, 21)
-            i, _, _ = s.read1ByteTxRx(servo_id, 22)
-            d, _, _ = s.read1ByteTxRx(servo_id, 23)
-            self.log_message.emit(f"[PID READ] ID={servo_id} P={p} I={i} D={d}")
-            return p, i, d
+            p, comm_p, _ = s.read1ByteTxRx(servo_id, 21)
+            i, comm_i, _ = s.read1ByteTxRx(servo_id, 22)
+            d, comm_d, _ = s.read1ByteTxRx(servo_id, 23)
+            if comm_p == 0 and comm_i == 0 and comm_d == 0:
+                self.log_message.emit(f"[PID READ] ID={servo_id} P={p} I={i} D={d}")
+                self.pid_values.emit(servo_id, p, i, d)
+            else:
+                self.log_message.emit(f"[PID READ] ID={servo_id} comm error — check connection")
 
     # ── register table ──────────────────────────────────────────────
     @Slot(int)
@@ -433,6 +443,7 @@ class ServoBackend(QObject):
     register_written  = Signal(int, int, int)
     log_message       = Signal(str)
     error_occurred    = Signal(str)
+    pid_values        = Signal(int, int, int, int)  # servo_id, P, I, D
     id_changed        = Signal(int, int)
     baud_changed      = Signal(int, int)
     motion_finished   = Signal(int)
@@ -449,7 +460,7 @@ class ServoBackend(QObject):
             "connected", "connection_failed", "disconnected",
             "servos_found", "telemetry_update", "registers_read",
             "register_written", "log_message", "error_occurred",
-            "id_changed", "baud_changed", "motion_finished",
+            "id_changed", "baud_changed", "motion_finished", "pid_values",
         ]:
             getattr(self._worker, sig_name).connect(getattr(self, sig_name))
 
