@@ -226,6 +226,38 @@ QPushButton#btn_flat:hover {
     color: #58a6ff;
 }
 
+/* ── Emergency Stop Button ────────────────────────────────────── */
+QPushButton#btn_estop {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #6e1a18, stop:1 #4a0f0e);
+    color: #ff6b6b;
+    border: 2px solid #f85149;
+    border-radius: 5px;
+    padding: 3px 12px;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    min-height: 20px;
+}
+
+QPushButton#btn_estop:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #da3633, stop:1 #9b1c1a);
+    color: #ffffff;
+    border-color: #ff6b6b;
+}
+
+QPushButton#btn_estop:pressed {
+    background: #b91c1a;
+    border-color: #fca5a5;
+}
+
+QPushButton#btn_estop:disabled {
+    background: #1c1c1c;
+    border-color: #3f3030;
+    color: #5a3a3a;
+}
+
 /* ── Toggle / Checkable Buttons ──────────────────────────────────── */
 QPushButton:checked {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,

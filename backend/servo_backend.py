@@ -107,6 +107,7 @@ class _HardwareWorker(QObject):
     baud_changed      = Signal(int, int)     # id, code
     motion_finished   = Signal(int)          # servo id
     pid_values        = Signal(int, int, int, int)  # servo_id, P, I, D
+    estop_done        = Signal(int)          # number of servos stopped
 
     def __init__(self):
         super().__init__()
@@ -413,6 +414,25 @@ class _HardwareWorker(QObject):
         t = threading.Thread(target=_run, daemon=True)
         t.start()
 
+    # ── emergency stop ───────────────────────────────────────────────
+    @Slot(list)
+    def emergency_stop(self, servo_ids: list):
+        """Immediately disable torque on every servo in servo_ids.
+        Runs in the hardware thread so it cannot be interrupted by telemetry."""
+        with QMutexLocker(self._mutex):
+            if not self._servo:
+                return
+            stopped = 0
+            for sid in servo_ids:
+                try:
+                    self._servo.StopServo(sid)
+                    self.log_message.emit(f"[E-STOP] ID={sid} torque OFF")
+                    stopped += 1
+                except Exception as exc:
+                    self.log_message.emit(f"[E-STOP] ID={sid} ERR: {exc}")
+            self.log_message.emit(f"[E-STOP] {stopped}/{len(servo_ids)} servos stopped")
+            self.estop_done.emit(stopped)
+
     # ── raw packet ──────────────────────────────────────────────────
     @Slot(int, bytes)
     def send_raw_packet(self, servo_id: int, data: bytes):
@@ -447,6 +467,7 @@ class ServoBackend(QObject):
     id_changed        = Signal(int, int)
     baud_changed      = Signal(int, int)
     motion_finished   = Signal(int)
+    estop_done        = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -461,6 +482,7 @@ class ServoBackend(QObject):
             "servos_found", "telemetry_update", "registers_read",
             "register_written", "log_message", "error_occurred",
             "id_changed", "baud_changed", "motion_finished", "pid_values",
+            "estop_done",
         ]:
             getattr(self._worker, sig_name).connect(getattr(self, sig_name))
 
@@ -549,6 +571,11 @@ class ServoBackend(QObject):
         from PySide6.QtCore import QMetaObject, Qt
         QMetaObject.invokeMethod(self._worker, "execute_motion_profile",
                                  Qt.QueuedConnection, *self._args(servo_id, waypoints, loop))
+
+    def emergency_stop(self, servo_ids: list):
+        from PySide6.QtCore import QMetaObject, Qt
+        QMetaObject.invokeMethod(self._worker, "emergency_stop",
+                                 Qt.QueuedConnection, *self._args(servo_ids))
 
     def send_raw_packet(self, servo_id: int, data: bytes):
         from PySide6.QtCore import QMetaObject, Qt

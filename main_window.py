@@ -92,7 +92,7 @@ class ServoPilotMainWindow(QMainWindow):
 
     def _build_status_bar(self):
         sb = self.statusBar()
-        sb.setFixedHeight(26)
+        sb.setFixedHeight(28)
         self._sb_conn  = QLabel("● Disconnected")
         self._sb_conn.setStyleSheet("color: #484f58; margin: 0 8px;")
         self._sb_port  = QLabel("")
@@ -105,6 +105,18 @@ class ServoPilotMainWindow(QMainWindow):
         sb.addWidget(self._sb_port)
         sb.addWidget(self._sb_count)
         sb.addPermanentWidget(self._sb_servo)
+
+        # ── Emergency Stop button — always visible, disabled until connected ──
+        self._estop_btn = QPushButton("⛔  EMERGENCY STOP")
+        self._estop_btn.setObjectName("btn_estop")
+        self._estop_btn.setFixedHeight(22)
+        self._estop_btn.setToolTip(
+            "Immediately disable torque on ALL connected servos.\n"
+            "Servos will go limp. Use when hardware is about to collide."
+        )
+        self._estop_btn.setEnabled(False)   # disabled until connected
+        self._estop_btn.clicked.connect(self._emergency_stop)
+        sb.addPermanentWidget(self._estop_btn)
 
         # Console toggle button — always visible in status bar
         self._console_toggle_btn = QPushButton("Console ▲")
@@ -178,6 +190,7 @@ class ServoPilotMainWindow(QMainWindow):
         b.pid_values.connect(
             lambda sid, p, i, d: self._pid_tab.set_pid_values(p, i, d)
         )
+        b.estop_done.connect(self._on_estop_done)
 
     # ── Wire widget signals to backend ────────────────────────────────
     def _wire_widgets(self):
@@ -201,6 +214,7 @@ class ServoPilotMainWindow(QMainWindow):
         pt = self._pid_tab
         pt.read_pid_requested.connect(self._backend.read_pid)
         pt.write_pid_requested.connect(self._backend.write_pid)
+        pt.step_test_requested.connect(self._on_step_test_requested)
 
         ct = self._ctrl_tab
         ct.read_requested.connect(self._backend.read_all_registers)
@@ -227,6 +241,7 @@ class ServoPilotMainWindow(QMainWindow):
         baud = self._servo_panel.get_current_baud()
         self._sb_port.setText(f"{port} @ {baud:,} bps")
         self._console.append_log(f"Connected {port} @ {baud:,} bps")
+        self._estop_btn.setEnabled(True)
 
     @Slot(str)
     def _on_connection_failed(self, msg: str):
@@ -248,6 +263,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._sb_conn.setStyleSheet("color: #484f58; margin: 0 8px;")
         self._sb_port.setText("")
         self._sb_count.setText("")
+        self._estop_btn.setEnabled(False)
 
     @Slot(list)
     def _on_servos_found(self, ids: list):
@@ -313,6 +329,37 @@ class ServoPilotMainWindow(QMainWindow):
         self._telemetry_hz = hz
         if self._telemetry_timer.isActive():
             self._telemetry_timer.start(int(1000 / hz))
+
+    @Slot(int, int)
+    def _on_step_test_requested(self, servo_id: int, delta: int):
+        """Send goal = current_goal + delta, then return after 1.2 s."""
+        current = self._goal_positions.get(servo_id, 2048)
+        target  = max(0, min(4095, current + delta))
+        self._write_goal_position(servo_id, target)
+        self.statusBar().showMessage(
+            f"▶ Step test: Servo #{servo_id}  {current} → {target}", 3000
+        )
+        QTimer.singleShot(1200, lambda: self._write_goal_position(servo_id, current))
+
+    # ── Emergency Stop ────────────────────────────────────────────────
+    def _emergency_stop(self):
+        """Immediately disable torque on all known servos."""
+        if not self._connected_servos:
+            self.statusBar().showMessage("⛔ No servos connected.", 3000)
+            return
+        # Clear stored goal positions so nothing re-sends to them
+        self._goal_positions.clear()
+        self._backend.emergency_stop(list(self._connected_servos))
+        self.statusBar().showMessage(
+            f"⛔ E-STOP sent to {len(self._connected_servos)} servo(s) — torque disabled!", 5000
+        )
+
+    @Slot(int)
+    def _on_estop_done(self, count: int):
+        """Called when backend confirms all servos stopped."""
+        self._console.append_log(
+            f"[E-STOP] Complete — {count} servo(s) torque disabled.", error=False
+        )
 
     # ── Console toggle ────────────────────────────────────────────────
     def _toggle_console(self, checked: bool):
