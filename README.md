@@ -220,9 +220,3 @@ The **`error`** column makes it trivial to plot tracking quality, measure settli
 
 ---
 
-<div align="center">
-
-Made with ❤️ for robotics  
-**[github.com/uppalasrichaitanya/ServoDriver](https://github.com/uppalasrichaitanya/ServoDriver)**
-
-</div>
