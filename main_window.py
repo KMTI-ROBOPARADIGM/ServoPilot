@@ -232,6 +232,7 @@ class ServoPilotMainWindow(QMainWindow):
 
         mt = self._motion_tab
         mt.execute_requested.connect(self._backend.execute_motion_profile)
+        mt.stop_requested.connect(self._backend.stop_motion)
 
         st = self._sync_tab
         st.sync_write_requested.connect(self._on_sync_write_requested)

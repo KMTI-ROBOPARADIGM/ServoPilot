@@ -73,14 +73,18 @@ class GraphTab(QWidget):
             self._metric_checks[m] = cb
         ctrl.addWidget(met_box)
 
-        # Servo selector — SINGLE selection so only one servo is shown at a time
-        servo_box = QGroupBox("Servo to Plot")
+        # Servo selector — multi-select (Ctrl+click) to overlay multiple servos
+        servo_box = QGroupBox("Servos to Plot")
         servo_v = QVBoxLayout(servo_box)
         self._servo_list = QListWidget()
-        self._servo_list.setSelectionMode(QAbstractItemView.SingleSelection)   # ← fixed
+        self._servo_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._servo_list.setMaximumHeight(120)
         self._servo_list.itemSelectionChanged.connect(self._on_servo_selection_changed)
         servo_v.addWidget(self._servo_list)
+        hint = QLabel("Ctrl+click to overlay multiple")
+        hint.setStyleSheet("color: #484f58; font-size: 10px;")
+        hint.setAlignment(Qt.AlignCenter)
+        servo_v.addWidget(hint)
         ctrl.addWidget(servo_box)
 
         # Time window
@@ -238,45 +242,59 @@ class GraphTab(QWidget):
         now = time.monotonic() - self._t0
         x_min = max(0.0, now - self._window)
 
-        # Only the single selected servo
+        # All selected servos
         selected_items = self._servo_list.selectedItems()
         if not selected_items:
             return
-        selected_id = str(selected_items[0].data(Qt.UserRole))
+        selected_ids = [str(item.data(Qt.UserRole)) for item in selected_items]
+        multi = len(selected_ids) > 1
 
         # Collect all visible Y values to set a tight, useful Y range
         all_ys = []
 
-        for metric, cb in self._metric_checks.items():
-            if not cb.isChecked():
-                continue
-            if metric not in self._data:
-                continue
-            if selected_id not in self._data[metric]:
-                continue
-            pts = self._data[metric][selected_id]
-            color = TRACE_COLORS.get(metric, "#ffffff")
-            key = f"{metric}_{selected_id}"
+        for servo_idx, selected_id in enumerate(selected_ids):
+            for metric, cb in self._metric_checks.items():
+                if not cb.isChecked():
+                    continue
+                if metric not in self._data:
+                    continue
+                if selected_id not in self._data[metric]:
+                    continue
+                pts = self._data[metric][selected_id]
+                base_color = TRACE_COLORS.get(metric, "#ffffff")
 
-            # Use numpy for fast filtering
-            if len(pts) == 0:
-                continue
-            arr = np.array(pts)
-            mask = arr[:, 0] >= x_min
-            xs = arr[mask, 0]
-            ys = arr[mask, 1]
-            if len(xs) == 0:
-                continue
+                # Shift hue slightly for each servo so same-metric traces
+                # from different servos are distinguishable
+                if multi:
+                    c = QColor(base_color)
+                    h, s, l, a = c.getHslF()
+                    h = (h + servo_idx * 0.12) % 1.0
+                    c.setHslF(h, s, l, a)
+                    color = c
+                else:
+                    color = base_color
 
-            all_ys.extend(ys.tolist())
+                key = f"{metric}_{selected_id}"
 
-            name = f"{metric} [ID {selected_id}]"
-            if key not in self._curves:
-                style = Qt.DashLine if metric == "Goal Position" else Qt.SolidLine
-                pen = pg.mkPen(color=color, width=2, style=style)
-                self._curves[key] = self._plot.plot(xs, ys, pen=pen, name=name)
-            else:
-                self._curves[key].setData(xs, ys)
+                # Use numpy for fast filtering
+                if len(pts) == 0:
+                    continue
+                arr = np.array(pts)
+                mask = arr[:, 0] >= x_min
+                xs = arr[mask, 0]
+                ys = arr[mask, 1]
+                if len(xs) == 0:
+                    continue
+
+                all_ys.extend(ys.tolist())
+
+                name = f"{metric} [#{selected_id}]" if multi else f"{metric} [ID {selected_id}]"
+                if key not in self._curves:
+                    style = Qt.DashLine if metric == "Goal Position" else Qt.SolidLine
+                    pen = pg.mkPen(color=color, width=2, style=style)
+                    self._curves[key] = self._plot.plot(xs, ys, pen=pen, name=name)
+                else:
+                    self._curves[key].setData(xs, ys)
 
         # Lock X to rolling window
         self._plot.setXRange(x_min, now, padding=0)

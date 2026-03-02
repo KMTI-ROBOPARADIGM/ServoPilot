@@ -114,6 +114,7 @@ class _HardwareWorker(QObject):
         super().__init__()
         self._servo: Optional["ST3215"] = None
         self._mutex = QMutex()
+        self._motion_stop = threading.Event()  # stop flag for motion profile
 
     def _ensure_port_ready(self):
         """Reset the is_using flag so the next txPacket() won't return
@@ -425,26 +426,48 @@ class _HardwareWorker(QObject):
     @Slot(int, list, bool)
     def execute_motion_profile(self, servo_id: int, waypoints: list, loop: bool):
         """Run waypoints in a background thread (not blocking the QThread event loop)."""
+        self._motion_stop.clear()  # reset stop flag
+
         def _run():
             with QMutexLocker(self._mutex):
                 if not self._servo:
                     return
-            while True:
+            while not self._motion_stop.is_set():
                 for wp in waypoints:
+                    if self._motion_stop.is_set():
+                        self.log_message.emit(f"[MOTION] Stopped by user")
+                        self.motion_finished.emit(servo_id)
+                        return
                     pos   = wp.get("position", 2048)
                     speed = wp.get("speed", 1000)
                     acc   = wp.get("accel", 50)
                     delay = wp.get("delay", 0.5)
                     with QMutexLocker(self._mutex):
                         if self._servo:
+                            self._ensure_port_ready()
                             self._servo.MoveTo(servo_id, pos, speed=speed, acc=acc)
-                    time.sleep(delay)
+                            self.log_message.emit(
+                                f"[MOTION] #{servo_id} → {pos} spd={speed} acc={acc}"
+                            )
+                    # Sleep in small chunks so stop flag is checked promptly
+                    for _ in range(int(delay * 10)):
+                        if self._motion_stop.is_set():
+                            self.log_message.emit(f"[MOTION] Stopped by user")
+                            self.motion_finished.emit(servo_id)
+                            return
+                        time.sleep(0.1)
                 if not loop:
                     break
             self.motion_finished.emit(servo_id)
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()
+
+    @Slot()
+    def stop_motion(self):
+        """Set the stop flag so execute_motion_profile breaks out."""
+        self._motion_stop.set()
+        self.log_message.emit("[MOTION] Stop requested")
 
     # ── sync write (multi-servo, rapid sequential) ─────────────────────
     @Slot(dict)
@@ -652,6 +675,10 @@ class ServoBackend(QObject):
         from PySide6.QtCore import QMetaObject, Qt
         QMetaObject.invokeMethod(self._worker, "execute_motion_profile",
                                  Qt.QueuedConnection, *self._args(servo_id, waypoints, loop))
+
+    def stop_motion(self):
+        """Stop a running motion profile.  Thread-safe (just sets an Event)."""
+        self._worker.stop_motion()
 
     def emergency_stop(self, servo_ids: list):
         from PySide6.QtCore import QMetaObject, Qt
