@@ -240,6 +240,14 @@ class ServoPilotMainWindow(QMainWindow):
         # continuous feed — that would fight the user dragging the slider)
         st.read_position_requested.connect(self._on_sync_read_requested)
         st.torque_off_requested.connect(self._backend.emergency_stop)
+        # Homing — reuses the same proven write path
+        st.home_requested.connect(self._on_sync_write_requested)
+        st.homing_started.connect(
+            lambda: self.statusBar().showMessage("🏠 Homing in progress…", 3000)
+        )
+        st.homing_complete.connect(
+            lambda: self.statusBar().showMessage("🏠 Homing complete", 3000)
+        )
 
         con = self._console
         con.raw_send_requested.connect(self._backend.send_raw_packet)
@@ -303,6 +311,7 @@ class ServoPilotMainWindow(QMainWindow):
             servo_id, data, self._goal_positions.get(servo_id)
         )
         self._firmware_tab.update_telemetry(servo_id, data)
+        self._sync_tab.update_telemetry(servo_id, data)
         # Cache position for the Sync tab's one-shot '↺ Read Current' button.
         # Do NOT call sync_tab.on_position_read here — that would fight the
         # user dragging sliders by resetting them at 20 Hz.

@@ -11,6 +11,9 @@ The tab emits a single `sync_write_requested` signal carrying a dict
 """
 
 from __future__ import annotations
+import json
+import os
+from pathlib import Path
 from typing import Dict, Set
 
 from PySide6.QtWidgets import (
@@ -123,6 +126,12 @@ class SyncTab(QWidget):
     sync_write_requested    = Signal(object)  # {servo_id: position} — must use object, not dict!
     read_position_requested = Signal(int)    # single servo_id
     torque_off_requested    = Signal(list)   # list[int] servo_ids
+    homing_started          = Signal()
+    homing_complete         = Signal()
+    home_requested          = Signal(object)  # {servo_id: position}
+
+    # Path for home pose persistence
+    _HOME_FILE = Path(os.path.dirname(os.path.dirname(__file__))) / "home_pose.json"
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -133,6 +142,14 @@ class SyncTab(QWidget):
         self._row_widgets: Dict[int, _ServoRow] = {} # servo_id → row widget
         self._current_group: str | None       = None
 
+        # Homing state
+        self._home_positions: Dict[int, int]  = {}   # servo_id → home position
+        self._home_enabled: Dict[int, bool]   = {}   # servo_id → enabled for homing
+        self._latest_telemetry: Dict[int, dict] = {} # for "moving" check
+        self._home_checks: Dict[int, QCheckBox] = {} # servo_id → enable checkbox
+        self._home_spins: Dict[int, QSpinBox]   = {} # servo_id → home position spinbox
+
+        self._load_home_pose()
         self._build_ui()
 
     # ── UI Construction ───────────────────────────────────────────────
@@ -146,8 +163,14 @@ class SyncTab(QWidget):
         splitter.setHandleWidth(4)
         root.addWidget(splitter)
 
-        # Left panel: group list
-        splitter.addWidget(self._build_group_panel())
+        # Left panel: group list + homing
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
+        left_layout.addWidget(self._build_group_panel(), stretch=1)
+        left_layout.addWidget(self._build_homing_panel())
+        splitter.addWidget(left)
 
         # Right panel: servo assignment + position editor
         right = QWidget()
@@ -160,7 +183,7 @@ class SyncTab(QWidget):
         right_layout.addWidget(self._build_action_bar())
 
         splitter.addWidget(right)
-        splitter.setSizes([200, 800])
+        splitter.setSizes([240, 760])
         splitter.setStretchFactor(1, 1)
 
     def _build_group_panel(self) -> QWidget:
@@ -536,6 +559,7 @@ class SyncTab(QWidget):
             self._all_servos.append(servo_id)
             self._all_servos.sort()
         self._refresh_assign_checkboxes()
+        self._refresh_home_table()
 
     @Slot()
     def clear_servos(self):
@@ -546,6 +570,7 @@ class SyncTab(QWidget):
         self._row_widgets.clear()
         self._refresh_assign_checkboxes()
         self._refresh_rows()
+        self._refresh_home_table()
         self._status_lbl.setText("Disconnected.")
 
     @Slot(int, int)
@@ -560,3 +585,193 @@ class SyncTab(QWidget):
         if sent:
             ids = ", ".join(f"#{k}→{v}" for k, v in sent.items())
             self._status_lbl.setText(f"✔ Confirmed: {ids}")
+
+    def update_telemetry(self, servo_id: int, data: dict):
+        """Cache latest telemetry for moving-check in homing safety dialog."""
+        self._latest_telemetry[servo_id] = data
+
+    # ── Homing ─────────────────────────────────────────────────────────
+
+    def _build_homing_panel(self) -> QGroupBox:
+        """Collapsible homing section in the left panel."""
+        box = QGroupBox("🏠 Homing")
+        box.setCheckable(True)
+        box.setChecked(True)
+        box.setStyleSheet(
+            "QGroupBox { font-weight: bold; color: #58a6ff; padding-top: 14px; }"
+        )
+        v = QVBoxLayout(box)
+        v.setContentsMargins(8, 4, 8, 8)
+        v.setSpacing(4)
+
+        # Scrollable area for per-servo home rows
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(180)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+
+        self._home_container = QWidget()
+        self._home_layout = QVBoxLayout(self._home_container)
+        self._home_layout.setContentsMargins(0, 0, 0, 0)
+        self._home_layout.setSpacing(2)
+        self._home_layout.addStretch()
+        scroll.setWidget(self._home_container)
+        v.addWidget(scroll)
+
+        # Buttons
+        set_btn = QPushButton("📍 Set Current as Home")
+        set_btn.setObjectName("btn_flat")
+        set_btn.setToolTip("Read current positions from all servos and save as home pose.")
+        set_btn.clicked.connect(self._set_current_as_home)
+        v.addWidget(set_btn)
+
+        home_btn = QPushButton("🏠 Home All Servos")
+        home_btn.setObjectName("btn_success")
+        home_btn.setToolTip("Send all enabled servos to their home positions.")
+        home_btn.clicked.connect(self._home_all)
+        v.addWidget(home_btn)
+
+        self._home_status = QLabel("No servos")
+        self._home_status.setStyleSheet("color: #8b949e; font-size: 10px;")
+        self._home_status.setAlignment(Qt.AlignCenter)
+        v.addWidget(self._home_status)
+
+        return box
+
+    def _refresh_home_table(self):
+        """Rebuild the per-servo homing rows when servos change."""
+        # Clear existing rows (keep the stretch at the end)
+        while self._home_layout.count() > 1:
+            item = self._home_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._home_checks.clear()
+        self._home_spins.clear()
+
+        for sid in self._all_servos:
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(4)
+
+            cb = QCheckBox()
+            cb.setChecked(self._home_enabled.get(sid, True))
+            cb.setToolTip(f"Include servo #{sid} in homing")
+            cb.toggled.connect(lambda checked, s=sid: self._on_home_enable_toggled(s, checked))
+            h.addWidget(cb)
+            self._home_checks[sid] = cb
+
+            lbl = QLabel(f"#{sid}")
+            lbl.setFixedWidth(30)
+            lbl.setStyleSheet("color: #c9d1d9; font-weight: bold; font-size: 11px;")
+            h.addWidget(lbl)
+
+            spin = QSpinBox()
+            spin.setRange(0, 4095)
+            spin.setValue(self._home_positions.get(sid, 2048))
+            spin.setToolTip(f"Home position for servo #{sid}")
+            spin.valueChanged.connect(lambda v, s=sid: self._on_home_pos_changed(s, v))
+            h.addWidget(spin)
+            self._home_spins[sid] = spin
+
+            self._home_layout.insertWidget(self._home_layout.count() - 1, row)
+
+        n = len(self._all_servos)
+        self._home_status.setText(f"{n} servo{'s' if n != 1 else ''}" if n else "No servos")
+
+    def _on_home_enable_toggled(self, servo_id: int, checked: bool):
+        self._home_enabled[servo_id] = checked
+        self._save_home_pose()
+
+    def _on_home_pos_changed(self, servo_id: int, value: int):
+        self._home_positions[servo_id] = value
+        self._save_home_pose()
+
+    def _set_current_as_home(self):
+        """Read current positions from latest telemetry and save as home."""
+        if not self._all_servos:
+            self._home_status.setText("⚠ No servos connected")
+            return
+        count = 0
+        for sid in self._all_servos:
+            telem = self._latest_telemetry.get(sid)
+            if telem and "position" in telem:
+                pos = int(telem["position"])
+                self._home_positions[sid] = pos
+                self._home_enabled[sid] = True
+                if sid in self._home_spins:
+                    self._home_spins[sid].setValue(pos)
+                if sid in self._home_checks:
+                    self._home_checks[sid].setChecked(True)
+                count += 1
+        self._save_home_pose()
+        self._home_status.setText(f"✔ Home set from {count} servo{'s' if count != 1 else ''}")
+
+    def _home_all(self):
+        """Send all enabled servos to their home positions."""
+        targets = {
+            sid: self._home_positions.get(sid, 2048)
+            for sid in self._all_servos
+            if self._home_enabled.get(sid, True)
+        }
+        if not targets:
+            self._home_status.setText("⚠ No servos enabled for homing")
+            return
+
+        # Safety check: any servo currently moving?
+        moving = [
+            sid for sid in targets
+            if self._latest_telemetry.get(sid, {}).get("moving", False)
+        ]
+        if moving:
+            ids_str = ", ".join(f"#{s}" for s in moving)
+            reply = QMessageBox.question(
+                self, "Servos Moving",
+                f"Servo(s) {ids_str} are currently moving.\n\n"
+                "Proceed with homing anyway?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                self._home_status.setText("Homing cancelled.")
+                return
+
+        self.homing_started.emit()
+        self.home_requested.emit(targets)
+
+        ids_str = ", ".join(f"#{s}→{p}" for s, p in targets.items())
+        self._home_status.setText(f"🏠 Homing: {ids_str}")
+        self.homing_complete.emit()
+
+    # ── Home Pose Persistence ──────────────────────────────────────────
+
+    def _load_home_pose(self):
+        """Load home positions from JSON file."""
+        try:
+            if self._HOME_FILE.exists():
+                data = json.loads(self._HOME_FILE.read_text())
+                self._home_positions = {
+                    int(k): int(v) for k, v in data.get("home_positions", {}).items()
+                }
+                self._home_enabled = {
+                    int(sid): True for sid in data.get("enabled_servos", [])
+                }
+                # Also mark servos NOT in enabled list as disabled
+                for sid in self._home_positions:
+                    if sid not in self._home_enabled:
+                        self._home_enabled[sid] = False
+        except Exception:
+            pass  # start fresh if file is corrupt
+
+    def _save_home_pose(self):
+        """Save home positions to JSON file."""
+        data = {
+            "home_positions": {str(k): v for k, v in self._home_positions.items()},
+            "enabled_servos": [
+                sid for sid, en in self._home_enabled.items() if en
+            ],
+        }
+        try:
+            self._HOME_FILE.write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass  # silent fail on write error
