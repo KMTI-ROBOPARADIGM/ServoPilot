@@ -19,6 +19,7 @@ from widgets.control_table_tab  import ControlTableTab
 from widgets.firmware_tab       import FirmwareTab
 from widgets.motion_profile_tab import MotionProfileTab
 from widgets.packet_console     import PacketConsole
+from widgets.sync_tab           import SyncTab
 
 
 class ServoPilotMainWindow(QMainWindow):
@@ -29,6 +30,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._active_servo_id = -1
         self._goal_positions: dict[int, int] = {}
         self._connected_servos: list[int] = []
+        self._last_telemetry: dict[int, int] = {}   # servo_id → last-seen position
 
         self.setWindowTitle("ServoPilot — ST3215 Servo Management")
         self.setMinimumSize(1200, 700)
@@ -138,6 +140,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._ctrl_tab      = ControlTableTab()
         self._firmware_tab  = FirmwareTab()
         self._motion_tab    = MotionProfileTab()
+        self._sync_tab      = SyncTab()
 
         self._tabs.addTab(self._monitor_tab,  "🖥  Monitor")
         self._tabs.addTab(self._graph_tab,    "📈  Real-Time Graph")
@@ -145,6 +148,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._tabs.addTab(self._ctrl_tab,     "📋  Control Table")
         self._tabs.addTab(self._firmware_tab, "⚙  Device Config")
         self._tabs.addTab(self._motion_tab,   "🎬  Motion Profile")
+        self._tabs.addTab(self._sync_tab,     "🤝  Sync Control")
 
         self.setCentralWidget(self._tabs)
 
@@ -191,6 +195,7 @@ class ServoPilotMainWindow(QMainWindow):
             lambda sid, p, i, d: self._pid_tab.set_pid_values(p, i, d)
         )
         b.estop_done.connect(self._on_estop_done)
+        b.sync_write_done.connect(self._sync_tab.on_sync_write_done)
 
     # ── Wire widget signals to backend ────────────────────────────────
     def _wire_widgets(self):
@@ -228,6 +233,13 @@ class ServoPilotMainWindow(QMainWindow):
         mt = self._motion_tab
         mt.execute_requested.connect(self._backend.execute_motion_profile)
 
+        st = self._sync_tab
+        st.sync_write_requested.connect(self._on_sync_write_requested)
+        # ↺ Read button: one-shot fill from last-seen telemetry position (no
+        # continuous feed — that would fight the user dragging the slider)
+        st.read_position_requested.connect(self._on_sync_read_requested)
+        st.torque_off_requested.connect(self._backend.emergency_stop)
+
         con = self._console
         con.raw_send_requested.connect(self._backend.send_raw_packet)
 
@@ -259,6 +271,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._monitor_tab.clear_servo()
         self._graph_tab.clear_servos()
         self._pid_tab.clear_servos()   # reset PID servo selector
+        self._sync_tab.clear_servos()  # reset Sync tab
         self._sb_conn.setText("● Disconnected")
         self._sb_conn.setStyleSheet("color: #484f58; margin: 0 8px;")
         self._sb_port.setText("")
@@ -273,6 +286,7 @@ class ServoPilotMainWindow(QMainWindow):
         for sid in ids:
             self._graph_tab.register_servo(sid)
             self._pid_tab.add_servo(sid)   # populate PID servo selector
+            self._sync_tab.add_servo(sid)  # populate Sync tab servo list
         if ids:
             self._on_servo_selected(ids[0])
             self._telemetry_timer.start(int(1000 / self._telemetry_hz))
@@ -288,6 +302,11 @@ class ServoPilotMainWindow(QMainWindow):
             servo_id, data, self._goal_positions.get(servo_id)
         )
         self._firmware_tab.update_telemetry(servo_id, data)
+        # Cache position for the Sync tab's one-shot '↺ Read Current' button.
+        # Do NOT call sync_tab.on_position_read here — that would fight the
+        # user dragging sliders by resetting them at 20 Hz.
+        if "position" in data:
+            self._last_telemetry[servo_id] = data["position"]
 
     @Slot(str)
     def _on_error(self, msg: str):
@@ -318,6 +337,31 @@ class ServoPilotMainWindow(QMainWindow):
     def _write_goal_position(self, servo_id: int, position: int):
         self._goal_positions[servo_id] = position
         self._backend.write_goal_position(servo_id, position)
+
+    @Slot(int)
+    def _on_sync_read_requested(self, servo_id: int):
+        """One-shot: fill the sync tab slider with the last-seen telemetry position.
+        This is triggered by the ↺ button on each row and does NOT create a
+        continuous feed that would fight slider dragging."""
+        pos = self._last_telemetry.get(servo_id)
+        if pos is not None:
+            self._sync_tab.on_position_read(servo_id, pos)
+
+    @Slot(dict)
+    def _on_sync_write_requested(self, id_pos_map: dict):
+        """Move every servo in the sync group to its goal position.
+
+        Uses the exact same write_goal_position() path that the Monitor tab
+        uses — which is the only path we know works reliably through Qt's
+        cross-thread dispatch.  No fancy telemetry pausing, no direct mutex
+        access, no QTimer delays.
+        """
+        for sid, pos in id_pos_map.items():
+            self._goal_positions[sid] = pos
+            self._backend.write_goal_position(int(sid), int(pos))
+
+        ids_str = ", ".join(f"#{k}→{v}" for k, v in id_pos_map.items())
+        self.statusBar().showMessage(f"🤝 Sync move: {ids_str}", 4000)
 
     # ── Telemetry polling (timer-based, runs in main thread) ──────────
     def _poll_telemetry(self):

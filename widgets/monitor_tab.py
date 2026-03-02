@@ -56,7 +56,8 @@ class MonitorTab(QWidget):
         super().__init__(parent)
         self._servo_id: int = -1
         self._block_slider = False
-        self._torque_on: bool = False   # track torque state per servo
+        self._torque_on: bool = False
+        self._torque_states: dict[int, bool] = {}  # per-servo torque memory
         self._build_ui()
 
     # ── Build UI ─────────────────────────────────────────────────────
@@ -224,10 +225,27 @@ class MonitorTab(QWidget):
     # ── API ───────────────────────────────────────────────────────────
     def set_servo(self, servo_id: int):
         self._servo_id = servo_id
-        self._torque_on = False           # assume torque OFF until confirmed
-        self._torque_btn.setChecked(False)
-        self._torque_btn.setText("⚡ Torque ON")
-        self._torque_btn.setObjectName("btn_success")
+
+        # Restore remembered torque state for this servo (default OFF)
+        remembered = self._torque_states.get(servo_id, False)
+        self._torque_on = remembered
+
+        # Block signals so changing the check state doesn't fire a
+        # hardware torque command.
+        self._torque_btn.blockSignals(True)
+        self._torque_btn.setChecked(remembered)
+        self._torque_btn.blockSignals(False)
+
+        if remembered:
+            self._torque_btn.setText("⚡ Torque ON")
+            self._torque_btn.setObjectName("btn_success")
+        else:
+            self._torque_btn.setText("⚡ Torque OFF")
+            self._torque_btn.setObjectName("btn_danger")
+        # force style refresh
+        self._torque_btn.style().unpolish(self._torque_btn)
+        self._torque_btn.style().polish(self._torque_btn)
+
         self._torque_warn.setVisible(False)
         self._banner.setVisible(False)
         self._content.setVisible(True)
@@ -235,6 +253,7 @@ class MonitorTab(QWidget):
 
     def clear_servo(self):
         self._servo_id = -1
+        self._torque_states.clear()
         self._banner.setVisible(True)
         self._content.setVisible(False)
 
@@ -295,6 +314,7 @@ class MonitorTab(QWidget):
     def _torque_toggled(self, checked: bool):
         if self._servo_id >= 0:
             self._torque_on = checked
+            self._torque_states[self._servo_id] = checked  # remember per-servo
             self.torque_toggled.emit(self._servo_id, checked)
             if checked:
                 self._torque_btn.setText("⚡ Torque ON")

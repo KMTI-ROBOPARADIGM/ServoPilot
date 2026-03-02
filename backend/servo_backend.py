@@ -108,11 +108,20 @@ class _HardwareWorker(QObject):
     motion_finished   = Signal(int)          # servo id
     pid_values        = Signal(int, int, int, int)  # servo_id, P, I, D
     estop_done        = Signal(int)          # number of servos stopped
+    sync_write_done   = Signal(dict)         # {servo_id: position} that was sent
 
     def __init__(self):
         super().__init__()
         self._servo: Optional["ST3215"] = None
         self._mutex = QMutex()
+
+    def _ensure_port_ready(self):
+        """Reset the is_using flag so the next txPacket() won't return
+        COMM_PORT_BUSY.  A failed rxPacket() (e.g. SerialException during
+        readPort) can leave this flag stuck True, permanently killing ALL
+        subsequent serial communication."""
+        if self._servo:
+            self._servo.portHandler.is_using = False
 
     # ── connection ──────────────────────────────────────────────────
     @Slot(str, int)
@@ -184,8 +193,20 @@ class _HardwareWorker(QObject):
             if not self._servo:
                 self.error_occurred.emit("Not connected")
                 return
+            self._ensure_port_ready()
+            # Flush stale bytes from a prior unclean exit
+            try:
+                self._servo.portHandler.ser.reset_input_buffer()
+            except Exception:
+                pass
             self.log_message.emit("[SCAN] Scanning IDs 0–253 …")
-            ids = self._servo.ListServos()
+            try:
+                ids = self._servo.ListServos()
+            except Exception as exc:
+                self._ensure_port_ready()
+                self.error_occurred.emit(f"Scan failed: {exc}")
+                self.log_message.emit(f"[SCAN] FAILED: {exc}")
+                return
             self.servos_found.emit(ids)
             self.log_message.emit(f"[SCAN] Found: {ids}")
 
@@ -201,6 +222,7 @@ class _HardwareWorker(QObject):
 
     def _read_telemetry_locked(self, servo_id: int) -> Optional[Dict]:
         s = self._servo
+        self._ensure_port_ready()
         try:
             pos  = s.ReadPosition(servo_id)
             spd_tpl = s.ReadSpeed(servo_id)
@@ -220,6 +242,7 @@ class _HardwareWorker(QObject):
                 "moving":      bool(mov),
             }
         except Exception:
+            self._ensure_port_ready()
             return None
 
     # ── control ─────────────────────────────────────────────────────
@@ -228,6 +251,7 @@ class _HardwareWorker(QObject):
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
+            self._ensure_port_ready()
             res = self._servo.WritePosition(servo_id, max(0, min(4095, position)))
             self.log_message.emit(f"[WRITE] ID={servo_id} GoalPos={position} → {'OK' if res else 'ERR'}")
 
@@ -236,6 +260,7 @@ class _HardwareWorker(QObject):
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
+            self._ensure_port_ready()
             res = self._servo.SetSpeed(servo_id, speed)
             self.log_message.emit(f"[WRITE] ID={servo_id} Speed={speed} → {'OK' if res else 'ERR'}")
 
@@ -244,6 +269,7 @@ class _HardwareWorker(QObject):
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
+            self._ensure_port_ready()
             res = self._servo.SetAcceleration(servo_id, acc)
             self.log_message.emit(f"[WRITE] ID={servo_id} Acc={acc} → {'OK' if res else 'ERR'}")
 
@@ -252,6 +278,7 @@ class _HardwareWorker(QObject):
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
+            self._ensure_port_ready()
             if on:
                 self._servo.StartServo(servo_id)
             else:
@@ -293,15 +320,20 @@ class _HardwareWorker(QObject):
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
+            self._ensure_port_ready()
             s = self._servo
-            p, comm_p, _ = s.read1ByteTxRx(servo_id, 21)
-            i, comm_i, _ = s.read1ByteTxRx(servo_id, 22)
-            d, comm_d, _ = s.read1ByteTxRx(servo_id, 23)
-            if comm_p == 0 and comm_i == 0 and comm_d == 0:
-                self.log_message.emit(f"[PID READ] ID={servo_id} P={p} I={i} D={d}")
-                self.pid_values.emit(servo_id, p, i, d)
-            else:
-                self.log_message.emit(f"[PID READ] ID={servo_id} comm error — check connection")
+            try:
+                p, comm_p, _ = s.read1ByteTxRx(servo_id, 21)
+                i, comm_i, _ = s.read1ByteTxRx(servo_id, 22)
+                d, comm_d, _ = s.read1ByteTxRx(servo_id, 23)
+                if comm_p == 0 and comm_i == 0 and comm_d == 0:
+                    self.log_message.emit(f"[PID READ] ID={servo_id} P={p} I={i} D={d}")
+                    self.pid_values.emit(servo_id, p, i, d)
+                else:
+                    self.log_message.emit(f"[PID READ] ID={servo_id} comm error — check connection")
+            except Exception as exc:
+                self._ensure_port_ready()
+                self.log_message.emit(f"[PID READ] ID={servo_id} exception: {exc}")
 
     # ── register table ──────────────────────────────────────────────
     @Slot(int)
@@ -414,6 +446,47 @@ class _HardwareWorker(QObject):
         t = threading.Thread(target=_run, daemon=True)
         t.start()
 
+    # ── sync write (multi-servo, rapid sequential) ─────────────────────
+    @Slot(dict)
+    def sync_write_positions(self, id_pos_map: dict):
+        """Write goal positions to multiple servos sequentially.
+
+        Uses WritePosition() (single serial transaction per servo) rather than
+        MoveTo() which needs 5+ round-trips.  Assumes the user has already
+        enabled torque and set mode from the Monitor tab.
+
+        Resets portHandler.is_using before each write to clear stuck flags from
+        prior failed reads, and adds a small inter-servo delay to let the bus
+        settle.
+        """
+        with QMutexLocker(self._mutex):
+            if not self._servo or not id_pos_map:
+                return
+            s = self._servo
+            sent = {}
+            for sid, pos in id_pos_map.items():
+                sid = int(sid)
+                pos = max(0, min(4095, int(pos)))
+                try:
+                    # Reset the is_using flag in case a prior telemetry read
+                    # left it stuck (the ST3215 protocol layer returns
+                    # COMM_PORT_BUSY if this is True).
+                    s.portHandler.is_using = False
+                    res = s.WritePosition(sid, pos)
+                    sent[sid] = pos
+                    self.log_message.emit(
+                        f"[SYNC] #{sid} → {pos}  {'OK' if res else 'WARN: no ack'}"
+                    )
+                except Exception as exc:
+                    self.log_message.emit(f"[SYNC] ERR #{sid}: {exc}")
+                # Small delay so the bus settles between packets
+                time.sleep(0.02)
+            if sent:
+                ids_str = ", ".join(f"#{k}→{v}" for k, v in sent.items())
+                self.log_message.emit(f"[SYNC] Moved: {ids_str}")
+                self.sync_write_done.emit(sent)
+
+
     # ── emergency stop ───────────────────────────────────────────────
     @Slot(list)
     def emergency_stop(self, servo_ids: list):
@@ -468,6 +541,11 @@ class ServoBackend(QObject):
     baud_changed      = Signal(int, int)
     motion_finished   = Signal(int)
     estop_done        = Signal(int)
+    sync_write_done   = Signal(dict)         # {servo_id: position} that was sent
+
+    # Internal signal to dispatch dict to worker thread (QMetaObject.invokeMethod
+    # with QVariantMap is broken in PySide6 — the call silently does nothing).
+    _do_sync_write = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -482,9 +560,12 @@ class ServoBackend(QObject):
             "servos_found", "telemetry_update", "registers_read",
             "register_written", "log_message", "error_occurred",
             "id_changed", "baud_changed", "motion_finished", "pid_values",
-            "estop_done",
+            "estop_done", "sync_write_done",
         ]:
             getattr(self._worker, sig_name).connect(getattr(self, sig_name))
+
+        # Connect internal signal → worker slot (cross-thread, auto-queued)
+        self._do_sync_write.connect(self._worker.sync_write_positions)
 
     # ── public proxy methods ─────────────────────────────────────────
     def connect_device(self, port: str, baudrate: int):
@@ -577,6 +658,14 @@ class ServoBackend(QObject):
         QMetaObject.invokeMethod(self._worker, "emergency_stop",
                                  Qt.QueuedConnection, *self._args(servo_ids))
 
+    def sync_write_positions(self, id_pos_map: dict):
+        """Send goal positions to multiple servos via the hardware worker thread.
+
+        Uses a dedicated signal instead of QMetaObject.invokeMethod because
+        PySide6's invokeMethod silently drops dict/QVariantMap arguments.
+        """
+        self._do_sync_write.emit(id_pos_map)
+
     def send_raw_packet(self, servo_id: int, data: bytes):
         from PySide6.QtCore import QMetaObject, Qt
         QMetaObject.invokeMethod(self._worker, "send_raw_packet",
@@ -594,6 +683,7 @@ class ServoBackend(QObject):
         from PySide6.QtCore import Q_ARG
         type_map = {
             str: "QString", int: "int", bool: "bool",
-            list: "QVariant", bytes: "QByteArray", float: "double",
+            list: "QVariantList", dict: "QVariantMap",
+            bytes: "QByteArray", float: "double",
         }
         return [Q_ARG(type_map.get(type(a), "QVariant"), a) for a in args]
