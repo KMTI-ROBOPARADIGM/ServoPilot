@@ -129,6 +129,7 @@ class SyncTab(QWidget):
     homing_started          = Signal()
     homing_complete         = Signal()
     home_requested          = Signal(object)  # {servo_id: position}
+    groups_changed          = Signal(dict)    # {name: [sorted ids]}
 
     # Path for home pose persistence
     _HOME_FILE = Path(os.path.dirname(os.path.dirname(__file__))) / "home_pose.json"
@@ -374,6 +375,7 @@ class SyncTab(QWidget):
         item = QListWidgetItem(name)
         self._group_list.addItem(item)
         self._group_list.setCurrentItem(item)
+        self.groups_changed.emit(self.get_groups_dict())
 
     def _remove_group(self):
         item = self._group_list.currentItem()
@@ -392,6 +394,7 @@ class SyncTab(QWidget):
         if self._current_group == name:
             self._current_group = None
             self._refresh_rows()
+        self.groups_changed.emit(self.get_groups_dict())
 
     def _rename_group(self, item: QListWidgetItem):
         old_name = item.text()
@@ -408,6 +411,7 @@ class SyncTab(QWidget):
         item.setText(new_name)
         if self._current_group == old_name:
             self._current_group = new_name
+        self.groups_changed.emit(self.get_groups_dict())
 
     @Slot(str)
     def _on_group_selected(self, name: str):
@@ -461,6 +465,7 @@ class SyncTab(QWidget):
         self._status_lbl.setText(
             f"Group '{self._current_group}' — {len(grp_servos)} servo(s) assigned."
         )
+        self.groups_changed.emit(self.get_groups_dict())
         self._assign_box.setTitle(
             f"ASSIGN SERVOS  ─  {self._current_group}" if self._current_group
             else "ASSIGN SERVOS  (select group first)"
@@ -572,6 +577,10 @@ class SyncTab(QWidget):
         self._refresh_rows()
         self._refresh_home_table()
         self._status_lbl.setText("Disconnected.")
+
+    def get_groups_dict(self) -> dict:
+        """Return groups as {name: [sorted servo_ids]} for external consumers."""
+        return {name: sorted(ids) for name, ids in self._groups.items()}
 
     @Slot(int, int)
     def on_position_read(self, servo_id: int, pos: int):

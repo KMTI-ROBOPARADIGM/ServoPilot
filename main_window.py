@@ -253,10 +253,13 @@ class ServoPilotMainWindow(QMainWindow):
 
         mt = self._motion_tab
         mt.execute_requested.connect(self._backend.execute_motion_profile)
+        mt.execute_group_requested.connect(self._backend.execute_motion_profile_group)
         mt.stop_requested.connect(self._backend.stop_motion)
 
         st = self._sync_tab
         st.sync_write_requested.connect(self._on_sync_write_requested)
+        # Feed groups to motion profile tab whenever they change
+        st.groups_changed.connect(self._motion_tab.set_groups)
         # ↺ Read button: one-shot fill from last-seen telemetry position (no
         # continuous feed — that would fight the user dragging the slider)
         st.read_position_requested.connect(self._on_sync_read_requested)
@@ -318,6 +321,7 @@ class ServoPilotMainWindow(QMainWindow):
             self._graph_tab.register_servo(sid)
             self._pid_tab.add_servo(sid)   # populate PID servo selector
             self._sync_tab.add_servo(sid)  # populate Sync tab servo list
+            self._motion_tab.add_servo(sid)  # populate Motion Profile selector
         if ids:
             self._on_servo_selected(ids[0])
             self._telemetry_timer.start(int(1000 / self._telemetry_hz))

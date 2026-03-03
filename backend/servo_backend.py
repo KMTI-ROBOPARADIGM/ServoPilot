@@ -469,6 +469,48 @@ class _HardwareWorker(QObject):
         self._motion_stop.set()
         self.log_message.emit("[MOTION] Stop requested")
 
+    @Slot(list, list, bool)
+    def execute_motion_profile_group(self, servo_ids: list, waypoints: list, loop: bool):
+        """Run multi-servo waypoints in a background thread."""
+        self._motion_stop.clear()
+
+        def _run():
+            with QMutexLocker(self._mutex):
+                if not self._servo:
+                    return
+            while not self._motion_stop.is_set():
+                for wp in waypoints:
+                    if self._motion_stop.is_set():
+                        self.log_message.emit("[MOTION] Stopped by user")
+                        self.motion_finished.emit(0)
+                        return
+                    positions = wp.get("positions", {})
+                    speed = wp.get("speed", 1000)
+                    acc = wp.get("accel", 50)
+                    delay = wp.get("delay", 0.5)
+                    with QMutexLocker(self._mutex):
+                        if self._servo:
+                            self._ensure_port_ready()
+                            for sid in servo_ids:
+                                pos = positions.get(sid, 2048)
+                                self._servo.MoveTo(sid, pos, speed=speed, acc=acc)
+                            sids_str = " ".join(f"#{s}→{positions.get(s, 2048)}" for s in servo_ids)
+                            self.log_message.emit(
+                                f"[MOTION] Group: {sids_str} spd={speed} acc={acc}"
+                            )
+                    for _ in range(int(delay * 10)):
+                        if self._motion_stop.is_set():
+                            self.log_message.emit("[MOTION] Stopped by user")
+                            self.motion_finished.emit(0)
+                            return
+                        time.sleep(0.1)
+                if not loop:
+                    break
+            self.motion_finished.emit(0)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
     # ── sync write (multi-servo, rapid sequential) ─────────────────────
     @Slot(dict)
     def sync_write_positions(self, id_pos_map: dict):
@@ -675,6 +717,11 @@ class ServoBackend(QObject):
         from PySide6.QtCore import QMetaObject, Qt
         QMetaObject.invokeMethod(self._worker, "execute_motion_profile",
                                  Qt.QueuedConnection, *self._args(servo_id, waypoints, loop))
+
+    def execute_motion_profile_group(self, servo_ids: list, waypoints: list, loop: bool):
+        from PySide6.QtCore import QMetaObject, Qt
+        QMetaObject.invokeMethod(self._worker, "execute_motion_profile_group",
+                                 Qt.QueuedConnection, *self._args(servo_ids, waypoints, loop))
 
     def stop_motion(self):
         """Stop a running motion profile.  Thread-safe (just sets an Event)."""
