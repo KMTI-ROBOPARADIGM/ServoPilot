@@ -11,6 +11,7 @@ from PySide6.QtGui import QAction, QFont, QIcon
 from styles.dark_theme import get_stylesheet
 from backend.servo_backend import ServoBackend
 from backend.telemetry_worker import TelemetryWorker
+from backend.api_bridge import ApiBridge
 from widgets.servo_list_panel   import ServoListPanel
 from widgets.monitor_tab        import MonitorTab
 from widgets.graph_tab          import GraphTab
@@ -31,6 +32,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._goal_positions: dict[int, int] = {}
         self._connected_servos: list[int] = []
         self._last_telemetry: dict[int, int] = {}   # servo_id → last-seen position
+        self._api_bridge = ApiBridge()
 
         self.setWindowTitle("ServoPilot — ST3215 Servo Management")
         self.setMinimumSize(1200, 700)
@@ -128,6 +130,25 @@ class ServoPilotMainWindow(QMainWindow):
         self._console_toggle_btn.setChecked(False)   # starts collapsed
         self._console_toggle_btn.toggled.connect(self._toggle_console)
         sb.addPermanentWidget(self._console_toggle_btn)
+
+        # API server toggle
+        self._api_label = QLabel("")
+        self._api_label.setStyleSheet("color: #3fb950; font-size: 10px; margin: 0 4px;")
+        sb.addPermanentWidget(self._api_label)
+
+        self._api_btn = QPushButton("API ▶")
+        self._api_btn.setObjectName("btn_flat")
+        self._api_btn.setFixedHeight(20)
+        self._api_btn.setToolTip("Start/stop the REST + WebSocket API server on localhost:8765")
+        self._api_btn.setCheckable(True)
+        self._api_btn.toggled.connect(self._toggle_api_server)
+        sb.addPermanentWidget(self._api_btn)
+
+        # API command queue polling timer
+        self._api_cmd_timer = QTimer(self)
+        self._api_cmd_timer.setInterval(100)  # 10 Hz
+        self._api_cmd_timer.timeout.connect(self._poll_api_commands)
+        self._api_cmd_timer.start()
 
     def _build_central(self):
         self._tabs = QTabWidget()
@@ -292,6 +313,7 @@ class ServoPilotMainWindow(QMainWindow):
         self._connected_servos = sorted(ids)
         self._servo_panel.on_servos_found(ids)
         self._sb_count.setText(f"{len(ids)} servo{'s' if len(ids)!=1 else ''}")
+        self._api_bridge.set_connected_servos(ids)
         for sid in ids:
             self._graph_tab.register_servo(sid)
             self._pid_tab.add_servo(sid)   # populate PID servo selector
@@ -312,6 +334,7 @@ class ServoPilotMainWindow(QMainWindow):
         )
         self._firmware_tab.update_telemetry(servo_id, data)
         self._sync_tab.update_telemetry(servo_id, data)
+        self._api_bridge.update_telemetry(servo_id, data)
         # Cache position for the Sync tab's one-shot '↺ Read Current' button.
         # Do NOT call sync_tab.on_position_read here — that would fight the
         # user dragging sliders by resetting them at 20 Hz.
@@ -469,9 +492,62 @@ class ServoPilotMainWindow(QMainWindow):
             "https://www.feetechrc.com/Data/feetechrc.com/upload/file/20210902/start%20%20use%20ST%20series%20servo.pdf"
         )
 
-    # ── Cleanup ───────────────────────────────────────────────────────
+    # ── Cleanup ─────────────────────────────────────────────────
     def closeEvent(self, event):
         self._telemetry_timer.stop()
+        # Stop API server if running
+        if self._api_bridge.server_running:
+            from backend.api_server import stop_server
+            stop_server(self._api_bridge)
         self._backend.disconnect_device()
         self._backend.shutdown()
         super().closeEvent(event)
+
+    # ── API Server ───────────────────────────────────────────────
+
+    def _toggle_api_server(self, on: bool):
+        from backend.api_server import start_server, stop_server
+        if on:
+            start_server(self._api_bridge, host="127.0.0.1", port=8765)
+            self._api_btn.setText("API ⏹")
+            self._api_label.setText("API: http://localhost:8765")
+            self._console.append_log("[API] Server started on http://localhost:8765")
+        else:
+            stop_server(self._api_bridge)
+            self._api_btn.setText("API ▶")
+            self._api_label.setText("")
+            self._console.append_log("[API] Server stopped")
+
+    def _poll_api_commands(self):
+        """Process commands queued by the REST/WebSocket API."""
+        for cmd in self._api_bridge.poll_commands():
+            action = cmd.get("action")
+            try:
+                if action == "set_position":
+                    sid = int(cmd["id"])
+                    pos = int(cmd["position"])
+                    if cmd.get("speed") is not None:
+                        self._backend.write_goal_speed(sid, int(cmd["speed"]))
+                    self._backend.write_goal_position(sid, pos)
+
+                elif action == "set_torque":
+                    sid = int(cmd["id"])
+                    self._backend.set_torque(sid, bool(cmd["enable"]))
+
+                elif action == "set_mode":
+                    sid = int(cmd["id"])
+                    self._backend.set_mode(sid, int(cmd["mode"]))
+
+                elif action == "home":
+                    # Trigger the sync tab's home routine
+                    self._sync_tab._home_all()
+
+                elif action == "emergency_stop":
+                    self._emergency_stop()
+
+                elif action == "sync_move":
+                    positions = cmd.get("positions", {})
+                    self._on_sync_write_requested(positions)
+
+            except Exception as e:
+                self._console.append_log(f"[API] Command error: {e}")
