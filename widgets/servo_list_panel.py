@@ -1,4 +1,12 @@
-"""ServoListPanel — left dock widget for port selection and servo discovery."""
+"""ServoListPanel — left dock widget for port selection and servo discovery.
+
+FILE: widgets/servo_list_panel.py
+PURPOSE: Shows serial port picker, baud rate selector, Connect/Disconnect/Scan
+         buttons, and a table of discovered servos with live position readouts.
+CALLED BY: main_window._build_left_dock() creates this widget
+EMITS SIGNALS: connect_requested(str, int), disconnect_requested(), scan_requested(),
+               servo_selected(int) — consumed by main_window._wire_widgets()
+"""
 
 import serial.tools.list_ports
 from PySide6.QtWidgets import (
@@ -30,6 +38,9 @@ class ServoListPanel(QWidget):
     scan_requested       = Signal()
 
     def __init__(self, parent=None):
+        """TYPE: User-defined | CALLED BY: main_window._build_left_dock()
+        CALLS: _build_ui()
+        """
         super().__init__(parent)
         self._connected = False
         self._servos: dict[int, dict] = {}   # id → info dict
@@ -42,6 +53,10 @@ class ServoListPanel(QWidget):
 
     # ── Build UI ─────────────────────────────────────────────────────
     def _build_ui(self):
+        """Construct all UI elements: port combo, baud combo, buttons, servo table.
+        TYPE: User-defined | CALLED BY: __init__
+        CALLS: QComboBox, QPushButton, QTableWidget, _refresh_ports() [PySide6 widgets]
+        """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
@@ -145,6 +160,10 @@ class ServoListPanel(QWidget):
 
     # ── Slots ─────────────────────────────────────────────────────────
     def _refresh_ports(self):
+        """Re-scan available serial ports and repopulate the combo box.
+        TYPE: User-defined | CALLED BY: __init__ and Refresh button click
+        CALLS: serial.tools.list_ports.comports() [pyserial]
+        """
         current = self._port_combo.currentText()
         self._port_combo.blockSignals(True)
         self._port_combo.clear()
@@ -161,6 +180,10 @@ class ServoListPanel(QWidget):
         self._port_combo.blockSignals(False)
 
     def _on_connect(self):
+        """Handle Connect button click — emit connect_requested signal.
+        TYPE: User-defined | CALLED BY: Connect button clicked signal
+        EMITS: connect_requested(port, baudrate)
+        """
         port = self._port_combo.currentData()
         if not port:
             return
@@ -168,14 +191,24 @@ class ServoListPanel(QWidget):
         self.connect_requested.emit(port, baud)
 
     def _on_disconnect(self):
+        """Handle Disconnect button — emit disconnect_requested.
+        TYPE: User-defined | CALLED BY: Disconnect button | EMITS: disconnect_requested()
+        """
         self.disconnect_requested.emit()
 
     def _on_scan(self):
+        """Handle Scan button — emit scan_requested.
+        TYPE: User-defined | CALLED BY: Scan button | EMITS: scan_requested()
+        """
         self.scan_requested.emit()
         self._scan_btn.setText("Scanning…")
         self._scan_btn.setEnabled(False)
 
     def _on_row_changed(self):
+        """Handle servo table row selection — emit servo_selected.
+        TYPE: User-defined | CALLED BY: QTableWidget.currentRowChanged signal
+        EMITS: servo_selected(servo_id)
+        """
         rows = self._table.selectedItems()
         if rows:
             row = self._table.currentRow()
@@ -184,6 +217,9 @@ class ServoListPanel(QWidget):
 
     # ── Public update API ────────────────────────────────────────────
     def on_connected(self):
+        """Update UI state after successful connection.
+        TYPE: User-defined | CALLED BY: main_window._on_connected()
+        """
         self._connected = True
         self._connect_btn.setEnabled(False)
         self._disconnect_btn.setEnabled(True)
@@ -192,6 +228,9 @@ class ServoListPanel(QWidget):
         self._status_lbl.setStyleSheet("color: #2ea043; font-size: 11px; font-weight: bold;")
 
     def on_disconnected(self):
+        """Reset UI state after disconnection.
+        TYPE: User-defined | CALLED BY: main_window._on_disconnected()
+        """
         self._connected = False
         self._connect_btn.setEnabled(True)
         self._disconnect_btn.setEnabled(False)
@@ -208,6 +247,9 @@ class ServoListPanel(QWidget):
         self._status_lbl.setStyleSheet("color: #f85149; font-size: 11px;")
 
     def on_servos_found(self, ids: list):
+        """Populate the servo table with discovered IDs.
+        TYPE: User-defined | CALLED BY: main_window._on_servos_found()
+        """
         self._scan_btn.setText("🔍  Scan for Servos")
         self._scan_btn.setEnabled(True)
         self._servos = {sid: {} for sid in ids}
@@ -230,6 +272,9 @@ class ServoListPanel(QWidget):
             self._table.selectRow(0)
 
     def update_telemetry(self, servo_id: int, data: dict):
+        """Update the table position column for one servo.
+        TYPE: User-defined | CALLED BY: main_window._on_telemetry()
+        """
         for row in range(self._table.rowCount()):
             if int(self._table.item(row, 0).text()) == servo_id:
                 temp = data.get("temperature", 0)
