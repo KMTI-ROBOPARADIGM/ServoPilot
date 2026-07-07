@@ -1,6 +1,22 @@
-import time
-import serial
-import sys
+"""PortHandler — Serial port wrapper for ST3215 servo communication.
+
+FILE: st3215/port_handler.py
+PURPOSE: Manages the physical serial port connection. Handles port open/close,
+         byte-level read/write, packet timeouts, and timing calculations.
+         All serial I/O in the st3215 library flows through this class.
+CALLED BY: ST3215 (st3215.py) — inherits from protocol_packet_handler which uses this
+CALLS INTO: serial.Serial [pyserial]
+KEY METHODS:
+  • openPort/closePort  — open/close the serial connection
+  • readPort/writePort  — raw byte-level I/O
+  • setPacketTimeout    — compute and set timeout for expected packet length
+  • isPacketTimeout     — check if timeout has elapsed
+  • setupPort           — configure serial parameters (baud, 8N1, non-blocking)
+"""
+
+import time    # [STDLIB] High-resolution timing for packet timeouts
+import serial  # [pyserial] Serial port communication library
+import sys     # [STDLIB] Python version check for byte handling
 
 from .values import *
 

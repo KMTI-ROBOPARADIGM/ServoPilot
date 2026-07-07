@@ -1,4 +1,20 @@
-from .values import *
+"""GroupSyncWrite — Batched position write to multiple ST3215 servos.
+
+FILE: st3215/group_sync_write.py
+PURPOSE: Builds a sync-write packet containing data for multiple servos and
+         sends it in a single transaction. Used for coordinated multi-servo movement.
+CALLED BY: ST3215.__init__ creates GroupSyncWrite instance, used in MoveTo/WritePosition
+CALLS INTO: protocol_packet_handler.syncWriteTxOnly (protocol_packet_handler.py)
+KEY METHODS:
+  • addParam(id, data)   — add a servo's data to the batch
+  • removeParam(id)      — remove a servo from the batch
+  • changeParam(id, data)— update existing servo data
+  • clearParam()         — reset the batch
+  • txPacket()           — send the assembled sync-write packet
+  • makeParam()          — internal: flatten data_dict into param array
+"""
+
+from .values import *  # [USER-DEFINED, st3215/values.py] COMM_* constants
 
 class GroupSyncWrite:
     def __init__(self, ph, start_address, data_length):

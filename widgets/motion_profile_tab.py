@@ -1,14 +1,4 @@
-"""MotionProfileTab — Tab 6: Multi-servo waypoint trajectory editor + preview.
-
-Features:
-  - Target selector: individual servo OR group from Sync tab
-  - Dynamic table columns: single-servo (Pos/Speed/Accel/Delay) or
-    multi-servo (Servo1/Servo2/.../Speed/Accel/Delay)
-  - Non-blocking execution via backend threading
-  - Trajectory preview with one curve per servo
-  - JSON save/load for multi-servo profiles
-  - CSV backward compat for single-servo
-"""
+"""MotionProfileTab — Tab 6: Waypoint-based trajectory editor + preview."""
 
 import csv
 import json

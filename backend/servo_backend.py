@@ -1,16 +1,21 @@
 """Servo Backend — QObject bridge wrapping the ST3215 hardware library.
 
-All blocking hardware calls run in a dedicated QThread worker so the UI
-never freezes.  The backend communicates purely through Qt signals.
+FILE: backend/servo_backend.py
+PURPOSE: Provides a thread-safe abstraction over the ST3215 servo library.
+         All blocking serial I/O runs in a dedicated QThread (_HardwareWorker)
+         so the UI never freezes. Communication with the UI is purely via Qt signals.
+CALLED BY: main_window.py → ServoBackend(self)
+CALLS INTO: st3215.ST3215 (hardware library), QThread, QMutex, QTimer
+CONTAINS: _HardwareWorker (inner QObject), ServoBackend (public API)
 """
 
-import sys
-import os
-import time
-import threading
-from typing import Optional, List, Dict, Any
+import sys              # [STDLIB] Path manipulation
+import os               # [STDLIB] Path manipulation
+import time             # [STDLIB] sleep() for motion profiles
+import threading        # [STDLIB] Event() for motion stop flag
+from typing import Optional, List, Dict, Any  # [STDLIB] Type hints
 
-from PySide6.QtCore import QObject, Signal, Slot, QThread, QMutex, QMutexLocker
+from PySide6.QtCore import QObject, Signal, Slot, QThread, QMutex, QMutexLocker  # [PySide6] Threading + signals
 
 # Make sure the st3215 package on the repository root is importable
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -111,10 +116,14 @@ class _HardwareWorker(QObject):
     sync_write_done   = Signal(dict)         # {servo_id: position} that was sent
 
     def __init__(self):
+        """TYPE: User-defined | CALLED BY: ServoBackend.__init__
+        PURPOSE: Initialise worker state: no servo, a mutex for thread-safety,
+                 and a threading.Event to stop motion profiles.
+        """
         super().__init__()
         self._servo: Optional["ST3215"] = None
-        self._mutex = QMutex()
-        self._motion_stop = threading.Event()  # stop flag for motion profile
+        self._mutex = QMutex()                  # Thread-safe lock for all serial I/O
+        self._motion_stop = threading.Event()    # Stop flag for motion profile thread
 
     def _ensure_port_ready(self):
         """Reset the is_using flag so the next txPacket() won't return
@@ -127,6 +136,11 @@ class _HardwareWorker(QObject):
     # ── connection ──────────────────────────────────────────────────
     @Slot(str, int)
     def connect_device(self, port: str, baudrate: int):
+        """Open serial port and create ST3215 instance.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.connect_device → QMetaObject.invokeMethod
+        CALLS: PortHandler() [st3215], ST3215, GroupSyncWrite [st3215]
+        EMITS: connected() or connection_failed(str)
+        """
         if not _ST3215_AVAILABLE:
             self.connection_failed.emit(f"ST3215 library not importable: {_ST3215_IMPORT_ERROR}")
             return
@@ -177,6 +191,11 @@ class _HardwareWorker(QObject):
 
     @Slot()
     def disconnect_device(self):
+        """Close the serial port and reset state.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.disconnect_device
+        CALLS: portHandler.closePort() [st3215]
+        EMITS: disconnected()
+        """
         with QMutexLocker(self._mutex):
             if self._servo:
                 try:
@@ -190,6 +209,11 @@ class _HardwareWorker(QObject):
     # ── scan ────────────────────────────────────────────────────────
     @Slot()
     def scan_servos(self):
+        """Scan entire bus (IDs 0–253) and emit list of found servo IDs.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.scan_servos
+        CALLS: ST3215.PingServo() [st3215] for each ID
+        EMITS: servos_found(list[int])
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 self.error_occurred.emit("Not connected")
@@ -214,6 +238,11 @@ class _HardwareWorker(QObject):
     # ── telemetry read ──────────────────────────────────────────────
     @Slot(int)
     def read_telemetry(self, servo_id: int):
+        """Read telemetry for one servo and emit the result.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.read_telemetry
+        CALLS: _read_telemetry_locked() [self]
+        EMITS: telemetry_update(int, dict)
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -222,6 +251,11 @@ class _HardwareWorker(QObject):
                 self.telemetry_update.emit(servo_id, data)
 
     def _read_telemetry_locked(self, servo_id: int) -> Optional[Dict]:
+        """Read position/speed/load/voltage/temp/current/moving from one servo.
+        TYPE: User-defined (private) | CALLED BY: read_telemetry(), TelemetryWorker
+        CALLS: ST3215.ReadPosition/ReadSpeed/ReadLoad/ReadVoltage/
+               ReadTemperature/ReadCurrent/IsMoving [st3215 library]
+        """
         s = self._servo
         self._ensure_port_ready()
         try:
@@ -249,6 +283,11 @@ class _HardwareWorker(QObject):
     # ── control ─────────────────────────────────────────────────────
     @Slot(int, int)
     def write_goal_position(self, servo_id: int, position: int):
+        """Write target position to servo (clamped 0–4095).
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.write_goal_position
+              (ultimately from MonitorTab slider, SyncTab, API commands)
+        CALLS: ST3215.WritePosition() [st3215 library]
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -297,9 +336,12 @@ class _HardwareWorker(QObject):
     # ── PID ─────────────────────────────────────────────────────────
     @Slot(int, int, int, int)
     def write_pid(self, servo_id: int, p: int, i: int, d: int):
-        """Write P/I/D to EEPROM addresses 21/22/23 using write1ByteTxOnly.
-        Must use TxOnly (no response expected) for EEPROM writes — same pattern
-        as LockEprom/UnLockEprom/ChangeId in the ST3215 library."""
+        """Write PID gains to EEPROM (unlock → write P/I/D → re-lock).
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.write_pid
+              (from PIDTab → main_window._wire_widgets)
+        CALLS: ST3215.UnLockEprom/write1ByteTxOnly/LockEprom [st3215]
+        EMITS: log_message(str) on success or error_occurred(str) on failure
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -317,7 +359,11 @@ class _HardwareWorker(QObject):
 
     @Slot(int)
     def read_pid(self, servo_id: int):
-        """Read P/I/D values and emit pid_values signal so the UI can update."""
+        """Read P/I/D values from EEPROM registers 21/22/23.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.read_pid
+        CALLS: ST3215.read1ByteTxRx [st3215] for addrs 21, 22, 23
+        EMITS: pid_values(servo_id, P, I, D)
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -339,6 +385,11 @@ class _HardwareWorker(QObject):
     # ── register table ──────────────────────────────────────────────
     @Slot(int)
     def read_all_registers(self, servo_id: int):
+        """Read every register in REGISTER_MAP for one servo.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.read_all_registers
+        CALLS: ST3215.read1ByteTxRx/read2ByteTxRx [st3215] per register
+        EMITS: registers_read(servo_id, list[dict])
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -363,6 +414,11 @@ class _HardwareWorker(QObject):
 
     @Slot(int, int, int)
     def write_register(self, servo_id: int, addr: int, value: int):
+        """Write a single register value (unlock EEPROM → write → re-lock).
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.write_register
+        CALLS: ST3215.UnLockEprom/writeTxRx/LockEprom [st3215]
+        EMITS: register_written(servo_id, addr, value)
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -385,6 +441,10 @@ class _HardwareWorker(QObject):
     # ── device config ────────────────────────────────────────────────
     @Slot(int, int)
     def change_id(self, old_id: int, new_id: int):
+        """Change a servo's ID on the bus.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.change_id
+        CALLS: ST3215.ChangeId() [st3215]  EMITS: id_changed(old, new)
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -398,6 +458,10 @@ class _HardwareWorker(QObject):
 
     @Slot(int, int)
     def change_baudrate(self, servo_id: int, baud_code: int):
+        """Change a servo's baud rate code (0–7).
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.change_baudrate
+        CALLS: ST3215.ChangeBaudrate() [st3215]  EMITS: baud_changed(id, code)
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -410,6 +474,10 @@ class _HardwareWorker(QObject):
 
     @Slot(int, int)
     def set_angle_limits(self, servo_id: int, min_pos: int, max_pos: int):
+        """Set min/max angle limits in EEPROM.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.set_angle_limits
+        CALLS: ST3215.writeTxRx [st3215] at STS_MIN/MAX_ANGLE_LIMIT_L
+        """
         with QMutexLocker(self._mutex):
             if not self._servo:
                 return
@@ -425,7 +493,11 @@ class _HardwareWorker(QObject):
     # ── motion profile ───────────────────────────────────────────────
     @Slot(int, list, bool)
     def execute_motion_profile(self, servo_id: int, waypoints: list, loop: bool):
-        """Run waypoints in a background thread (not blocking the QThread event loop)."""
+        """Run single-servo waypoints in a background thread.
+        TYPE: User-defined Qt Slot | CALLED BY: ServoBackend.execute_motion_profile
+        CALLS: ST3215.MoveTo() [st3215] per waypoint, time.sleep() for delays
+        EMITS: motion_finished(servo_id) on completion
+        """
         self._motion_stop.clear()  # reset stop flag
 
         def _run():
@@ -586,9 +658,12 @@ class _HardwareWorker(QObject):
 
 
 class ServoBackend(QObject):
-    """
-    Public API: instantiate one of these, wire its signals, then call methods.
-    All heavy work is delegated to _HardwareWorker running in self._thread.
+    """Public facade for hardware access. Thread-safe proxy to _HardwareWorker.
+    TYPE: User-defined QObject | FILE: backend/servo_backend.py
+    CALLED BY: main_window.py → ServoBackend(self)
+    PURPOSE: Creates a QThread + _HardwareWorker, re-exports worker signals,
+             and provides proxy methods that use QMetaObject.invokeMethod to
+             dispatch calls to the worker thread (auto-queued connection).
     """
 
     # re-export worker signals
@@ -613,6 +688,10 @@ class ServoBackend(QObject):
     _do_sync_write = Signal(dict)
 
     def __init__(self, parent=None):
+        """Create worker thread and wire all signals through this facade.
+        TYPE: User-defined | CALLED BY: main_window.py __init__
+        CALLS: QThread() [PySide6], _HardwareWorker(), moveToThread() [PySide6]
+        """
         super().__init__(parent)
         self._thread = QThread(self)
         self._worker = _HardwareWorker()
@@ -633,7 +712,14 @@ class ServoBackend(QObject):
         self._do_sync_write.connect(self._worker.sync_write_positions)
 
     # ── public proxy methods ─────────────────────────────────────────
+    # Each method below dispatches its call to _HardwareWorker via
+    # QMetaObject.invokeMethod with Qt.QueuedConnection, so the actual
+    # serial I/O runs on the worker QThread, not the GUI thread.
+    # TYPE: User-defined proxy | CALLED BY: main_window (via _wire_widgets)
+    # CALLS: QMetaObject.invokeMethod → _HardwareWorker.<same_name>
+
     def connect_device(self, port: str, baudrate: int):
+        """Proxy → _HardwareWorker.connect_device (open serial port)."""
         QThread.currentThread()  # ensure running
         from PySide6.QtCore import QMetaObject, Qt
         QMetaObject.invokeMethod(self._worker, "connect_device",
@@ -749,11 +835,18 @@ class ServoBackend(QObject):
         return self._worker.is_connected()
 
     def shutdown(self):
+        """Stop the worker QThread and wait up to 2s for it to finish.
+        TYPE: User-defined | CALLED BY: main_window.closeEvent()
+        """
         self._thread.quit()
         self._thread.wait(2000)
 
     @staticmethod
     def _args(*args):
+        """Convert Python types to Q_ARG wrappers for QMetaObject.invokeMethod.
+        TYPE: User-defined static helper | CALLED BY: every proxy method above
+        CALLS: Q_ARG() [PySide6]
+        """
         from PySide6.QtCore import Q_ARG
         type_map = {
             str: "QString", int: "int", bool: "bool",

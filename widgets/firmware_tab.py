@@ -1,4 +1,19 @@
-"""FirmwareTab — Tab 5: Device configuration (ID, baud, limits, offset, diagnostics)."""
+"""FirmwareTab — Tab 5: Device configuration (ID, baud, limits, offset, diagnostics).
+
+FILE: widgets/firmware_tab.py
+PURPOSE: Provides UI for configuring servo hardware settings: change servo ID,
+         change baud rate, set angle limits, view diagnostic info. All changes
+         are sent to servo EEPROM via backend methods.
+CALLED BY: main_window._build_central() → FirmwareTab()
+EMITS SIGNALS: id_change_requested(int, int), baud_change_requested(int, int),
+               limits_requested(int, int, int)
+               — consumed by main_window._wire_widgets → backend methods
+KEY METHODS:
+  • __init__           — builds config panels [USER-DEFINED]
+  • set_servo(id)      — set active servo [CALLED BY: main_window._on_servo_selected]
+  • update_telemetry   — show live voltage/temp [CALLED BY: main_window._on_telemetry]
+USES: QSpinBox, QComboBox, QPushButton, BAUD_CODES [PySide6, servo_backend]
+"""
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,

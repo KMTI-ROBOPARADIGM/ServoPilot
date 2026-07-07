@@ -1,4 +1,21 @@
-from .values import *
+"""GroupSyncRead — Batched register read from multiple ST3215 servos.
+
+FILE: st3215/group_sync_read.py
+PURPOSE: Sends a sync-read command to multiple servos, receives all responses,
+         and parses per-servo data with checksum validation. Used for efficient
+         multi-servo telemetry reads.
+CALLED BY: (Available but not currently used in the app — individual reads used instead)
+CALLS INTO: protocol_packet_handler.syncReadTx/Rx (protocol_packet_handler.py)
+KEY METHODS:
+  • addParam(id)         — register a servo ID in the read group
+  • removeParam(id)      — unregister a servo ID
+  • txRxPacket()         — send sync-read and receive all responses
+  • readRx(rxpacket, id) — parse one servo's data from the raw response
+  • isAvailable(id, addr)— check if data is available for a servo
+  • getData(id, addr, len)— extract typed data for a servo
+"""
+
+from .values import *  # [USER-DEFINED, st3215/values.py] COMM_* constants
 
 class GroupSyncRead:
     def __init__(self, ph, start_address, data_length):

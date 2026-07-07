@@ -1,23 +1,28 @@
 """api_server — FastAPI REST + WebSocket server for ServoPilot.
 
-Runs in a daemon thread via uvicorn. All servo interaction goes through
-the ApiBridge to avoid touching Qt or serial directly.
+FILE: backend/api_server.py
+PURPOSE: Implements a REST API and WebSocket endpoint for remote servo control.
+         Runs in a daemon thread via uvicorn. All servo interaction goes through
+         the ApiBridge (api_bridge.py) — never touches Qt or serial directly.
+         Commands are queued and polled by main_window._poll_api_commands().
+CALLED BY: main_window._toggle_api_server() → start_server()/stop_server()
+CALLS INTO: ApiBridge (api_bridge.py) for all data access
 """
 
-from __future__ import annotations
+from __future__ import annotations  # [STDLIB] Forward reference annotations
 
-import asyncio
-import json
-import logging
-import threading
-import time
-from typing import Dict, List, Optional
+import asyncio    # [STDLIB] Async event loop for WebSocket streaming
+import json       # [STDLIB] JSON parsing for WebSocket messages
+import logging    # [STDLIB] Server logging
+import threading  # [STDLIB] Daemon thread for server
+import time       # [STDLIB] Timestamps for telemetry
+from typing import Dict, List, Optional  # [STDLIB] Type hints
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Header, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Header, HTTPException, Query  # [FastAPI] Web framework
+from fastapi.middleware.cors import CORSMiddleware  # [FastAPI] Cross-origin support
+from pydantic import BaseModel  # [Pydantic] Request body validation
 
-from backend.api_bridge import ApiBridge
+from backend.api_bridge import ApiBridge  # [USER-DEFINED] Thread-safe data bridge
 
 logger = logging.getLogger("servo_api")
 
@@ -41,6 +46,11 @@ class SyncMoveItem(BaseModel):
 # ── App factory ──────────────────────────────────────────────────────
 
 def create_app(bridge: ApiBridge) -> FastAPI:
+    """Build and return a FastAPI application with all endpoints.
+    TYPE: User-defined function | CALLED BY: start_server()
+    CALLS: FastAPI() [FastAPI], bridge.get_*/push_command [USER, api_bridge.py]
+    RETURNS: Configured FastAPI app instance
+    """
     app = FastAPI(
         title="ServoPilot API",
         description="REST + WebSocket API for ST3215 servo control",
@@ -57,6 +67,10 @@ def create_app(bridge: ApiBridge) -> FastAPI:
     # ── Auth dependency ──────────────────────────────────────────
 
     def _check_key(x_api_key: Optional[str] = Header(None)):
+        """Auth dependency: verify API key if one is configured.
+        TYPE: User-defined (inner function) | CALLED BY: Every endpoint below
+        CALLS: bridge.get_api_key() [USER, api_bridge.py]
+        """
         expected = bridge.get_api_key()
         if expected and x_api_key != expected:
             raise HTTPException(status_code=403, detail="Invalid API key")
@@ -65,6 +79,10 @@ def create_app(bridge: ApiBridge) -> FastAPI:
 
     @app.get("/servos", tags=["Servos"])
     def list_servos(x_api_key: Optional[str] = Header(None)):
+        """GET /servos — List all connected servos with current telemetry.
+        TYPE: FastAPI endpoint | CALLED BY: HTTP clients
+        CALLS: bridge.get_connected_servos(), bridge.get_telemetry()
+        """
         _check_key(x_api_key)
         ids = bridge.get_connected_servos()
         telem = bridge.get_telemetry()
@@ -200,7 +218,10 @@ def create_app(bridge: ApiBridge) -> FastAPI:
 
 
 async def _stream_telemetry(ws: WebSocket, bridge: ApiBridge):
-    """Send telemetry at ~10 Hz to a single WebSocket client."""
+    """Send telemetry at ~10 Hz to a single WebSocket client.
+    TYPE: User-defined async function | CALLED BY: ws_telemetry() as background task
+    CALLS: bridge.get_telemetry() [USER, api_bridge.py], ws.send_json() [FastAPI]
+    """
     try:
         while True:
             telem = bridge.get_telemetry()
@@ -232,7 +253,10 @@ _server_instance = None
 
 
 def start_server(bridge: ApiBridge, host: str = "127.0.0.1", port: int = 8765):
-    """Start the FastAPI server in a daemon thread."""
+    """Start the FastAPI server in a daemon thread.
+    TYPE: User-defined | CALLED BY: main_window._toggle_api_server(on=True)
+    CALLS: create_app(), uvicorn.Config/Server [uvicorn], threading.Thread [STDLIB]
+    """
     global _server_thread, _server_instance
 
     if bridge.server_running:
@@ -260,7 +284,10 @@ def start_server(bridge: ApiBridge, host: str = "127.0.0.1", port: int = 8765):
 
 
 def stop_server(bridge: ApiBridge):
-    """Signal the uvicorn server to shut down."""
+    """Signal the uvicorn server to shut down gracefully.
+    TYPE: User-defined | CALLED BY: main_window._toggle_api_server(on=False),
+          main_window.closeEvent()
+    """
     global _server_instance
     if _server_instance:
         _server_instance.should_exit = True

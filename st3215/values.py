@@ -1,5 +1,18 @@
-DEFAULT_BAUDRATE = 1000000
-LATENCY_TIMER = 50 
+"""values.py — Constants and register addresses for the ST3215 servo protocol.
+
+FILE: st3215/values.py
+PURPOSE: Defines all protocol constants used by the ST3215 library:
+         - Default baud rate, packet size limits, position/speed limits
+         - Packet structure indices (PKT_HEADER0, PKT_ID, PKT_LENGTH, etc.)
+         - Instruction codes (INST_PING, INST_READ, INST_WRITE, INST_SYNC_WRITE, etc.)
+         - Communication result codes (COMM_SUCCESS, COMM_TX_FAIL, etc.)
+         - Register addresses (STS_ID, STS_MODE, STS_GOAL_POSITION_L, STS_PRESENT_*, etc.)
+CALLED BY: Every file in the st3215 package imports from this module
+IMPORTED BY: servo_backend.py for REGISTER_MAP and COMM_SUCCESS
+"""
+
+DEFAULT_BAUDRATE = 1000000  # 1 Mbps — default ST3215 communication speed
+LATENCY_TIMER = 50          # USB latency timer in ms
 
 TXPACKET_MAX_LEN = 250
 RXPACKET_MAX_LEN = 250

@@ -1,4 +1,22 @@
-"""MonitorTab — Tab 1: Live telemetry dashboard + servo control."""
+"""MonitorTab — Tab 1: Live telemetry dashboard + servo control.
+
+FILE: widgets/monitor_tab.py
+PURPOSE: Displays live telemetry (position, speed, load, voltage, temperature,
+         current) as LCD panels and provides controls for goal position (slider),
+         speed, acceleration, torque enable/disable, and servo mode selection.
+CALLED BY: main_window._build_central() → MonitorTab()
+EMITS SIGNALS: goal_position_changed(int, int), goal_speed_changed(int, int),
+               acceleration_changed(int, int), torque_toggled(int, bool),
+               mode_changed(int, int), rate_changed(float)
+               — All consumed by main_window._wire_widgets()
+KEY METHODS:
+  • __init__          — builds UI: LCD panels, sliders, spinboxes, buttons
+  • _build_ui()       — constructs all UI elements [USER-DEFINED]
+  • set_servo(id)     — update controls for selected servo [CALLED BY: main_window._on_servo_selected]
+  • update_telemetry  — feed live data into LCD displays [CALLED BY: main_window._on_telemetry]
+  • clear_servo()     — reset displays on disconnect [CALLED BY: main_window._on_disconnected]
+USES: _LCDPanel (inner helper widget), QSlider, QSpinBox, QComboBox [PySide6]
+"""
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,

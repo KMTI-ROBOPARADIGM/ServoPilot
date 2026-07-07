@@ -1,5 +1,26 @@
 """SyncTab — Servo Group / Sync Write control panel.
 
+FILE: widgets/sync_tab.py
+PURPOSE: Manages servo groups (create, delete, assign servos), provides per-servo
+         position sliders, and fires synchronized goal-position writes to all
+         servos in a group with a single click. Also includes homing functionality
+         with persistent home pose storage (JSON file).
+CALLED BY: main_window._build_central() → SyncTab()
+EMITS SIGNALS: sync_write_requested(dict), groups_changed(dict),
+               read_position_requested(int), torque_off_requested(list),
+               home_requested(dict), homing_started(), homing_complete()
+               — consumed by main_window._wire_widgets
+KEY METHODS:
+  • __init__            — builds group manager + slider panel [USER-DEFINED]
+  • add_servo(id)       — add servo to available list [CALLED BY: main_window._on_servos_found]
+  • clear_servos()      — reset on disconnect [CALLED BY: main_window._on_disconnected]
+  • update_telemetry    — update position labels [CALLED BY: main_window._on_telemetry]
+  • on_position_read    — fill slider from cached pos [CALLED BY: main_window._on_sync_read_requested]
+  • on_sync_write_done  — feedback after write [CALLED BY: backend.sync_write_done signal]
+  • _home_all()         — move all servos to home [triggered by Home button / API command]
+  • _set_home()         — save current positions as home [triggered by Set Home button]
+USES: QSlider, QSpinBox, QListWidget, json, Path [PySide6/stdlib]
+
 Lets the user:
   1. Create named servo groups  (e.g. "Left Arm", "Wrist")
   2. Assign any subset of connected servos to a group

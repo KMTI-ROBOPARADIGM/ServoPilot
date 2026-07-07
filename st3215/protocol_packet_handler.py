@@ -1,4 +1,26 @@
-from .values import *
+"""protocol_packet_handler — Low-level packet protocol for ST3215 servo bus.
+
+FILE: st3215/protocol_packet_handler.py
+PURPOSE: Handles the binary protocol for ST3215 servo communication. Builds and
+         sends TX packets, receives and validates RX packets, and provides typed
+         read/write methods (1/2/4 byte). Also implements ping, sync read/write.
+         ST3215 class inherits from this to get all protocol methods.
+CALLED BY: ST3215 (st3215.py) via inheritance — ST3215 IS-A protocol_packet_handler
+CALLS INTO: PortHandler (port_handler.py) for raw serial I/O
+KEY METHODS:
+  • txPacket/rxPacket   — send/receive raw packets with checksum
+  • txRxPacket          — send packet and wait for response
+  • ping                — check if a servo ID responds
+  • readTxRx/writeTxRx  — read/write data at a register address
+  • read1/2/4ByteTxRx   — typed convenience wrappers
+  • write1/2/4ByteTxRx  — typed convenience wrappers
+  • syncReadTx/Rx       — group read from multiple servos
+  • syncWriteTxOnly     — group write to multiple servos
+  • sts_makeword/lobyte/hibyte — byte manipulation helpers
+USES: values.py constants (COMM_SUCCESS, PKT_*, INST_*, etc.)
+"""
+
+from .values import *  # [USER-DEFINED, st3215/values.py] Protocol constants
 
 class protocol_packet_handler(object):
     def __init__(self, portHandler):

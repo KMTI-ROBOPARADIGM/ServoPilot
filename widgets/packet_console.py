@@ -1,4 +1,19 @@
-"""PacketConsole — bottom-dock hex packet logger and raw sender."""
+"""PacketConsole — bottom-dock hex packet logger and raw sender.
+
+FILE: widgets/packet_console.py
+PURPOSE: Logs all serial communication (TX, RX, errors, connection events)
+         with timestamps and color-coded formatting. Also provides a raw hex
+         input field to send custom packets to a specific servo ID.
+CALLED BY: main_window._build_bottom_dock() → PacketConsole()
+RECEIVES DATA: backend.log_message signal → append_log()
+EMITS SIGNALS: raw_send_requested(int, bytes)
+               — consumed by main_window._wire_widgets → backend.send_raw_packet
+KEY METHODS:
+  • __init__         — builds log display + hex sender UI [USER-DEFINED]
+  • append_log(msg)  — add a timestamped log entry [CALLED BY: backend.log_message signal]
+  • _on_send()       — parse hex input and emit raw_send_requested [triggered by Send button]
+USES: QTextEdit, QLineEdit, QSpinBox [PySide6], datetime [STDLIB]
+"""
 
 from datetime import datetime
 from PySide6.QtWidgets import (

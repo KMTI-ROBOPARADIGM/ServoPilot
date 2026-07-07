@@ -1,4 +1,19 @@
-"""GraphTab — Tab 2: Real-time pyqtgraph multi-trace plotter."""
+"""GraphTab — Tab 2: Real-time pyqtgraph multi-trace plotter.
+
+FILE: widgets/graph_tab.py
+PURPOSE: Visualises servo telemetry data as scrolling time-series plots using
+         pyqtgraph. Users can select which metrics (position, speed, load, etc.)
+         and which servos to plot, adjust the time window, and export data to CSV.
+CALLED BY: main_window._build_central() → GraphTab()
+RECEIVES DATA: main_window._on_telemetry → update_telemetry(servo_id, data, goal_pos)
+KEY METHODS:
+  • __init__          — builds plot + controls [USER-DEFINED]
+  • register_servo(id) — add servo to selectable list [CALLED BY: main_window._on_servos_found]
+  • update_telemetry  — append data point + refresh plot [CALLED BY: main_window._on_telemetry]
+  • clear_servos()    — reset on disconnect [CALLED BY: main_window._on_disconnected]
+  • _export_csv()     — save captured data to file [CALLED BY: menu Tools > Export CSV]
+USES: pyqtgraph.PlotWidget, numpy, deque [pyqtgraph/stdlib]
+"""
 
 import time
 import csv

@@ -1,12 +1,34 @@
-import threading
-import time
-import math
+"""ST3215 — High-level servo control library for ST3215 servos.
 
-from .port_handler import *
-from .protocol_packet_handler import *
-from .group_sync_write import *
-from .group_sync_read import *
-from .values import *
+FILE: st3215/st3215.py
+PURPOSE: The core library for interacting with ST3215 servos over a serial bus.
+         Inherits from protocol_packet_handler (low-level protocol) and provides
+         high-level methods for reading parameters (position, speed, load, voltage,
+         temperature, current), writing parameters (goal position, speed, acceleration,
+         mode, torque), and advanced operations (ID change, baud change, EEPROM lock/
+         unlock, position offset, motion profiles). Thread-safe via threading.Lock.
+CALLED BY: _HardwareWorker (servo_backend.py) — all hardware calls go through this
+CALLS INTO: protocol_packet_handler methods (read/write TxRx), PortHandler, GroupSyncWrite
+KEY METHODS:
+  • PingServo(id)        — check if servo responds on bus
+  • ReadPosition/Speed/Load/Voltage/Temp/Current(id) — read telemetry
+  • MoveTo(id, pos, speed, acc) — set goal with speed+accel
+  • WritePosition(id, pos) — direct position write via sync-write
+  • SetSpeed/SetAcceleration/SetMode — write parameters
+  • EnableTorque/StopServo — torque control
+  • ChangeId/ChangeBaudrate — EEPROM config changes
+  • LockEprom/UnLockEprom — protect/unprotect EEPROM
+"""
+
+import threading  # [STDLIB] Lock for thread-safe serial access
+import time       # [STDLIB] Sleep for timing between writes
+import math       # [STDLIB] Math utilities
+
+from .port_handler import *                 # [USER-DEFINED] Serial port wrapper
+from .protocol_packet_handler import *      # [USER-DEFINED] Binary protocol layer
+from .group_sync_write import *             # [USER-DEFINED] Batched multi-servo write
+from .group_sync_read import *              # [USER-DEFINED] Batched multi-servo read
+from .values import *                       # [USER-DEFINED] Constants + register addresses
 
 
 __all__ = ['ST3215']

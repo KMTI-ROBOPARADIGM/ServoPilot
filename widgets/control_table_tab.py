@@ -1,4 +1,19 @@
-"""ControlTableTab — Tab 4: Full ST3215 register map viewer/editor."""
+"""ControlTableTab — Tab 4: Full ST3215 register map viewer/editor.
+
+FILE: widgets/control_table_tab.py
+PURPOSE: Displays all hardware registers (from REGISTER_MAP in servo_backend.py)
+         in a table with address, name, current value, access mode, and description.
+         Users can double-click writable registers to edit values and write them back.
+CALLED BY: main_window._build_central() → ControlTableTab()
+EMITS SIGNALS: read_requested(int), write_requested(int, int, int)
+               — consumed by main_window._wire_widgets → backend.read_all_registers/write_register
+KEY METHODS:
+  • __init__           — builds table UI [USER-DEFINED]
+  • set_servo(id)      — set the active servo [CALLED BY: main_window._on_servo_selected]
+  • populate_registers — fill table with read data [CALLED BY: backend.registers_read signal]
+  • _on_cell_changed   — detect edits and emit write_requested [triggered by table edit]
+USES: QTableWidget, QTableWidgetItem [PySide6]
+"""
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,

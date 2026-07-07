@@ -1,4 +1,13 @@
-"""ServoPilot Dark Robotics Theme — professional QSS stylesheet."""
+"""ServoPilot Dark Robotics Theme — professional QSS stylesheet.
+
+FILE: styles/dark_theme.py
+PURPOSE: Provides the application-wide dark theme as a QSS (Qt Style Sheet)
+         string. Styles all widgets including buttons, input fields, tables,
+         scrollbars, tab bars, group boxes, LCD numbers, docks, and status
+         indicators for a professional, robotics-themed dark UI.
+CALLED BY: main_window.py __init__ → setStyleSheet(get_stylesheet())
+CONTAINS: get_stylesheet() function returning a single QSS string
+"""
 
 
 def get_stylesheet() -> str:
