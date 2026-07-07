@@ -1,0 +1,44 @@
+--- E1: BASELINE ---
+Max stable polling Hz at 1Mbps: 70
+Max stable polling Hz at 115200: N/A
+Telemetry latency mean at 1Mbps:   2.85 ms
+Telemetry latency std at 1Mbps:    0.57 ms
+Telemetry latency min at 1Mbps:    2.15 ms
+Telemetry latency max at 1Mbps:    4.76 ms
+Telemetry latency at 115200:       N/A — servo configured at 1Mbps only
+
+--- E2: SCALABILITY ---
+Bus utilization 1 servo: 99.94%
+Bus utilization 2 servos: 99.94%
+Bus utilization 3 servos: 99.91%
+Bus utilization 4 servos: 99.94%
+Latency 1 servo: 4.49ms ± 0.91ms
+Latency 2 servos: 6.16ms ± 0.77ms
+Latency 3 servos: 9.29ms ± 1.63ms
+Latency 4 servos: 10.77ms ± 1.05ms
+
+--- E4: UI ---
+CPU baseline (normalized):     2.9%
+CPU under load (normalized):   11.6%
+CPU increase under load:       +8.7 percentage points
+RAM baseline:                  179.2 MB
+RAM under load (mean):         203.4 MB
+RAM increase:                  +24.2 MB
+RAM growth rate during load:   ~11 MB over 60 seconds
+GUI repaint rate:              12.5 FPS (design target, _REPAINT_MS=80)
+Host logical cores:            12
+
+--- E5: API ---
+REST RTT mean:                         21.15 ms
+REST RTT std:                          ± 9.13 ms
+WebSocket RTT:                         N/A — not registered in deployment
+
+--- SETUP INFO ---
+Number of servos used: 6
+Serial adapter model: USB Enhanced Serial CH3 Port
+Host CPU: 13th Gen Intel(R) Core(TM) i5-1335U
+Host RAM: 16 GB
+OS:windows
+Python version: 3.10
+Baud rate used for multi-servo tests: 1000000
+Load description (on servo): 6 servos, 20Hz polling
