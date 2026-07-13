@@ -84,7 +84,7 @@ git --version      # Required: any version
 ⚡ **TL;DR Quick Start**
 If you already have Python and Git installed, run these four commands to get started:
 ```bash
-git clone https://github.com/KMTI-ROBOPARADIGM/ST-Servo-Insight.git
+git clone https://github.com/KMTI-ROBOPARADIGM/ST-Servo-Insight.git](https://github.com/KMTI-ROBOPARADIGM/ServoPilot.git
 cd <folder>
 pip install -r requirements.txt
 python main.py
@@ -98,7 +98,7 @@ Follow these steps for a complete, clean setup of the project environment:
 1. **Fork the repository** (Optional): Click the "Fork" button at the top right of this repository on GitHub.
 2. **Clone the repo**:
 ```bash
-git clone https://github.com/KMTI-ROBOPARADIGM/ST-Servo-Insight.git
+git clone https://github.com/KMTI-ROBOPARADIGM/ST-Servo-Insight.git](https://github.com/KMTI-ROBOPARADIGM/ServoPilot.git
 ```
 3. **Navigate to the project directory**:
 ```bash
