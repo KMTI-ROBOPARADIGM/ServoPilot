@@ -1,0 +1,118 @@
+
+========================================================================
+E1/E2  SERIAL TELEMETRY
+========================================================================
+E1b single-servo telemetry read (7 register reads), n=100: mean 2.85 +/- 0.57 ms, median 2.65, p95 3.96, range 2.15-4.76
+
+E1a polling (target vs achieved, failures):
+ target_hz  actual_hz  total_reads  failures
+        10       9.24           93         0
+        20      17.19          172         0
+        30      25.18          253         0
+        40      31.36          314         0
+        50      32.08          321         0
+        60      48.08          481         0
+        70      61.63          617         0
+-> zero failures at every tested rate; 70 Hz is the highest rate TESTED, achieved 61.6 Hz (sleep-based pacing).
+
+E2b cycle latency per servo count:
+          count   mean   std  median    p95  headroom_20Hz_%
+n_servos                                                    
+1            50   4.49  0.91    4.53   5.99            91.02
+2            50   6.16  0.77    5.99   7.78            87.67
+3            50   9.29  1.63    8.69  12.31            81.42
+4            50  10.77  1.05   10.74  11.89            78.45
+Linear fit on means: 2.18 ms + 2.20 ms/servo, R^2 = 0.980
+  extrapolated 5 servos: 13.2 ms/cycle -> max cycle rate ~76 Hz
+  extrapolated 6 servos: 15.4 ms/cycle -> max cycle rate ~65 Hz
+
+E2a back-to-back throughput (the 99.9% 'utilization' is loop duty cycle by construction):
+ n_servos  reads_per_second  ms_per_servo_read  cycles_per_s
+        1            451.70               2.21        451.70
+        2            436.95               2.29        218.48
+        3            391.44               2.55        130.48
+        4            436.08               2.29        109.02
+
+Wire-time model @1 Mbps, 8N1: 56 B request + 51 B reply = 107 B -> 1.07 ms on the wire per servo telemetry read
+  6 servos @ 20 Hz: wire occupancy 12.8%, transaction occupancy (2.21 ms measured) 26.5%
+  6 servos @ 50 Hz: wire occupancy 32.1%, transaction occupancy (2.21 ms measured) 66.3%
+
+========================================================================
+E5  REST API
+========================================================================
+REST POST /servos/1/position (returns on enqueue), n=50: mean 20.32 +/- 8.91 ms, median 24.67, range 4.26-32.83
+  bimodal: 11 samples < 10 ms, 39 samples >= 10 ms
+  WebSocket rows in log: 0
+
+========================================================================
+E3  OPERATOR STUDY (repeated-measures reanalysis)
+========================================================================
+Excluded trials:
+op_id  servo_id         cond mode  trial_no  total_time   anomaly
+nai-4         2   50 mm+50 g    a         2         217 servo mal
+nai-4         3  50 mm+100 g    m         2         183  op error
+nai-1         2 100 mm+100 g    m         1         200    malfuc
+Valid: 197 (manual 98, advisor 99)
+Design: every operator covers each load exactly once on a different joint (True); each joint x load cell run by [2] operators (Latin square, replicated per group)
+
+[OLD, trials treated as independent] manual 87.7+/-30.6 s, advisor 48.5+/-19.8 s, eta=1.81
+
+Per-operator means:
+mode                 a       m   eta  log_ratio
+op_id exp_level                                
+inf-1 inf        40.80   74.60  1.83       0.60
+inf-2 inf        46.40   78.80  1.70       0.53
+inf-3 inf        40.90   79.70  1.95       0.67
+inf-4 inf        43.10   75.70  1.76       0.56
+inf-5 inf        42.80   73.70  1.72       0.54
+nai-1 nai        53.00   87.67  1.65       0.50
+nai-2 nai        63.00  107.10  1.70       0.53
+nai-3 nai        52.80  101.50  1.92       0.65
+nai-4 nai        52.67   93.11  1.77       0.57
+nai-5 nai        49.50  105.40  2.13       0.76
+
+PRIMARY (n=10 operators): eta (geometric mean of per-operator ratios) = 1.81, 95% CI [1.71, 1.91]; reduction 44.7% [41.5, 47.7]
+  paired t on log times: t(9) = 23.82, p = 1.9e-09; Wilcoxon signed-rank (exact, two-sided): W = 0, p = 0.0020; 10/10 operators faster with advisor; d_z = 7.53
+  inf: eta 1.79 [1.67, 1.92] (n=5; exact Wilcoxon cannot go below p=0.0625 at n=5)
+  nai: eta 1.83 [1.61, 2.08] (n=5; exact Wilcoxon cannot go below p=0.0625 at n=5)
+  ratio-of-means eta 1.81: operator-cluster bootstrap 95% CI [1.73, 1.91], two-stage bootstrap [1.61, 2.04]
+
+Linear mixed model, log(time) ~ mode + group + load + joint + (1|operator):
+  eta = 1.87, 95% CI [1.76, 1.98], z = -20.5
+  LRT mode x group: chi2(1) = 0.02, p = 0.885
+  LRT mode x load: chi2(4) = 18.85, p = 0.001
+  LRT mode x joint: chi2(4) = 12.37, p = 0.015
+
+Matched operator x joint x load cells: 50; advisor faster in 50
+  factor        level  n_cells  manual_s  advisor_s   eta  lo95  hi95     p  p_holm
+    cond          0 g       10     95.50      41.95 2.300 1.940 2.727 0.002    0.02
+    cond 100 mm+100 g       10     87.50      52.80 1.663 1.515 1.825 0.002    0.02
+    cond  100 mm+50 g       10     89.60      53.05 1.778 1.489 2.122 0.002    0.02
+    cond  50 mm+100 g       10     86.30      44.75 2.005 1.710 2.349 0.002    0.02
+    cond   50 mm+50 g       10     83.90      50.85 1.677 1.502 1.872 0.002    0.02
+servo_id            1       10     73.35      35.50 2.104 1.723 2.568 0.002    0.02
+servo_id            2       10    119.30      66.35 1.799 1.521 2.128 0.002    0.02
+servo_id            3       10    107.65      68.95 1.565 1.413 1.733 0.002    0.02
+servo_id            4       10     77.85      40.10 1.923 1.712 2.161 0.002    0.02
+servo_id            5       10     64.65      32.50 2.006 1.700 2.368 0.002    0.02
+
+========================================================================
+ORDER AND LEARNING SENSITIVITY
+========================================================================
+manual: repetition 1 = 92.5 s, repetition 2 = 81.0 s, ratio 1.133, Wilcoxon p = 0.0000 (n=48)
+advisor: repetition 1 = 48.9 s, repetition 2 = 47.5 s, ratio 1.028, Wilcoxon p = 0.1506 (n=49)
+Conservative contrast (most-practised manual rep 2 vs first advisor rep 1): eta 1.74 [1.62, 1.87], n=49 cells
+
+========================================================================
+FINAL RESPONSE QUALITY (per-operator means, Wilcoxon)
+========================================================================
+overshoot  manual    1.617   advisor    1.549   p = 0.7148
+rise       manual    0.298   advisor    0.297   p = 0.9219
+settling   manual  591.114   advisor  588.363   p = 0.7695
+sse_steps  manual    1.813   advisor    1.976   p = 0.2754
+iters      manual    8.276   advisor    5.758   p = 0.0020
+final_p    manual   20.337   advisor   19.599   p = 0.1934
+final_i    manual    0.600   advisor    0.406   p = 0.1211
+final_d    manual    2.206   advisor    1.263   p = 0.0039
+time per step test: manual 10.8 s, advisor 8.3 s
+settling of final responses: 511-708 ms, mean 590 ms

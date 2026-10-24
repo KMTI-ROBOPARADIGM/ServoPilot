@@ -17,12 +17,13 @@ ServoPilot eliminates the complexity of interacting with serial bus servos by pr
 - [SYSTEM REQUIREMENTS & PREREQUISITES](#system-requirements--prerequisites)
 - [GETTING STARTED](#getting-started)
 - [INSTALLATION — FULL STEP-BY-STEP GUIDE](#installation--full-step-by-step-guide)
-- [ENVIRONMENT VARIABLES](#environment-variables)
+- [CONFIGURATION](#configuration)
 - [RUNNING THE PROJECT](#running-the-project)
 - [USAGE GUIDE](#usage-guide)
 - [API REFERENCE](#api-reference)
 - [PROJECT STRUCTURE](#project-structure)
 - [TESTING](#testing)
+- [REPRODUCING THE INDICON 2026 PAPER](#reproducing-the-indicon-2026-paper)
 - [CONTRIBUTING](#contributing)
 - [ROADMAP](#roadmap)
 
@@ -84,8 +85,8 @@ git --version      # Required: any version
 ⚡ **TL;DR Quick Start**
 If you already have Python and Git installed, run these four commands to get started:
 ```bash
-git clone https://github.com/KMTI-ROBOPARADIGM/ST-Servo-Insight.git](https://github.com/KMTI-ROBOPARADIGM/ServoPilot.git
-cd <folder>
+git clone https://github.com/KMTI-ROBOPARADIGM/ServoPilot.git
+cd ServoPilot
 pip install -r requirements.txt
 python main.py
 ```
@@ -98,11 +99,11 @@ Follow these steps for a complete, clean setup of the project environment:
 1. **Fork the repository** (Optional): Click the "Fork" button at the top right of this repository on GitHub.
 2. **Clone the repo**:
 ```bash
-git clone https://github.com/KMTI-ROBOPARADIGM/ST-Servo-Insight.git](https://github.com/KMTI-ROBOPARADIGM/ServoPilot.git
+git clone https://github.com/KMTI-ROBOPARADIGM/ServoPilot.git
 ```
 3. **Navigate to the project directory**:
 ```bash
-cd <folder>
+cd ServoPilot
 ```
 4. **Create a virtual environment (Recommended)**:
 ```bash
@@ -116,38 +117,16 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
-6. **Copy the environment file**:
-```bash
-cp .env.example .env
-```
-7. **Connect your hardware**: Plug your ST3215 serial bus interface into a USB port on your machine and ensure it has 12V power.
-8. **Run the application**:
+6. **Connect your hardware**: Plug your ST3215 serial bus interface into a USB port on your machine and ensure it has 12V power.
+7. **Run the application**:
 ```bash
 python main.py
 ```
 
 ---
 
-## ENVIRONMENT VARIABLES
-Below is the standard configuration using a `.env` file at the root of your project:
-
-```env
-# API Server
-API_HOST=127.0.0.1                 # The host address for the REST API (defaults to 127.0.0.1)
-API_PORT=8765                      # Port to run the FastAPI server on (defaults to 8765)
-
-# Hardware Configuration (Optional Overrides)
-DEFAULT_BAUDRATE=1000000           # Default serial baudrate for ST3215 servos
-TELEMETRY_RATE=20                  # Global polling rate in Hz
-```
-
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `API_HOST` | No | `127.0.0.1` | The local IP address where the API server will listen |
-| `API_PORT` | No | `8765` | The port allocated for the API server |
-| `DEFAULT_BAUDRATE` | No | `1000000` | Defines the default baudrate the app attempts to use |
-| `TELEMETRY_RATE` | No | `20` | Determines the speed the UI updates internal state from hardware |
-
+## CONFIGURATION
+Settings are chosen in the GUI: serial port and baud rate (default 1,000,000) in the servo list panel, telemetry poll rate (10/20/30/50 Hz, default 20 Hz) in the Monitor tab, and the API server (bound to `127.0.0.1:8765`) with the "API ▶" button in the status bar. No `.env` file is used.
 ---
 
 ## RUNNING THE PROJECT
@@ -230,14 +209,14 @@ curl -X POST http://localhost:8765/servo/1/position \
 
 ## PROJECT STRUCTURE
 ```text
-Servo-Insight/
+ServoPilot/
 ├── backend/            # Serial worker threads, API server handlers, and data logic
 ├── st3215/             # The canonical device protocol package for packet generation
 ├── styles/             # UI themes, including custom high-contrast dark_theme.py
 ├── test/               # All Pytest unit and integration testing files
 ├── widgets/            # Heavily compartmentalized PySide tabs (Monitor, PID, Control Table)
 ├── .gitignore          # Excluded tracking files
-├── ArchitectureDiAGRAM.png # High-level static visual map of the system
+├── experiments/        # Scripts, raw data and analysis for the INDICON 2026 paper
 ├── main_window.py      # The massive UI glue layer coordinating tabs and backend
 ├── main.py             # Application entry point — Run this!
 ├── requirements.txt    # Project Python dependencies
@@ -248,18 +227,35 @@ Servo-Insight/
 ---
 
 ## TESTING
-The application ships with a testing suite optimized for `pytest` to guarantee the integrity of the ST3215 protocol logic.
+The `test/` folder contains hardware test scripts for the `st3215` driver. They need a servo connected and the serial port given in the `ST3215_DEV` environment variable:
 ```bash
-# Run the full test suite
-pytest test/
-
-# Run a specific test file
-pytest test/test_st3215_packet.py
-
-# Generate a coverage report (requires pytest-cov)
-pytest --cov=st3215 test/
+# Windows (PowerShell):  $env:ST3215_DEV="COM3"
+# Linux/macOS:           export ST3215_DEV=/dev/ttyUSB0
+python test/test_01_ping_servo.py
+python test/test_12_read_position.py
 ```
-**Expected Output:** `================ test session starts ================ ... X passed in 0.5s`
+---
+
+## REPRODUCING THE INDICON 2026 PAPER
+The `experiments/` folder holds everything behind the results in *ServoPilot: A Deterministic Multi-Threaded Orchestration Framework with Rule-Based PID Advisory for Serial Bus Actuators* (IEEE INDICON 2026).
+
+| Folder | Paper result | What it contains |
+| --- | --- | --- |
+| `E1_baseline/` | Telemetry latency, polling-rate test | Scripts and raw CSVs |
+| `E2_scalability/` | Table II (one to four servos) | Cycle-latency and back-to-back throughput scripts and CSVs |
+| `E3_pid/` | Operator study (Tables III–V, Fig. 3) | Anonymized trial data (`dataset_cleaned.csv`), `verify_stats.py`, and `revision_reanalysis.py` with its output |
+| `E4_ui/` | CPU and memory use | Resource-monitor script (values are the script's 60 s summaries) |
+| `E5_api/` | REST round-trip time | Script and raw log |
+
+**Test bench.** SO-ARM101 arm with six ST3215 servos on one RS-485 bus at 1 Mbps through a USB adapter; Windows laptop with an Intel i5-1335U, 16 GB RAM and Python 3.10; telemetry poll rate 20 Hz. Operator trials started from P=10, I=0, D=0 and ended when overshoot < 15%, rise time < 0.8 s, settling time ≤ 750 ms and steady-state error < 10 steps.
+
+**Re-running the analysis** (no hardware needed):
+```bash
+pip install numpy pandas scipy statsmodels
+cd experiments
+python E3_pid/revision_reanalysis.py
+```
+The hardware experiments additionally need `psutil`, `requests` and `websocket-client`, a connected servo, and the serial port passed with `--port` (see the header of each script).
 
 ---
 

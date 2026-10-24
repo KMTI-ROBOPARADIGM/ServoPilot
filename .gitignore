@@ -36,3 +36,6 @@ test/results/
 
 # Distribution
 *.spec
+
+# Runtime state written by the Sync tab
+home_pose.json

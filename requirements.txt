@@ -1,3 +1,7 @@
 PySide6>=6.6
 pyqtgraph>=0.13
 pyserial>=3.5
+numpy>=1.24
+fastapi>=0.100
+uvicorn[standard]>=0.23
+pydantic>=2.0
