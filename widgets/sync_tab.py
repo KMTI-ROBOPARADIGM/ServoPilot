@@ -25,7 +25,7 @@ Lets the user:
   1. Create named servo groups  (e.g. "Left Arm", "Wrist")
   2. Assign any subset of connected servos to a group
   3. Set individual goal positions via sliders + spinboxes
-  4. Fire ALL positions in one hardware sync-write packet with a single click
+  4. Send ALL positions with a single click (rapid sequential writes, one per servo)
 
 The tab emits a single `sync_write_requested` signal carrying a dict
 {servo_id: position} that main_window wires to backend.sync_write_positions().
@@ -340,8 +340,8 @@ class SyncTab(QWidget):
         self._sync_btn.setObjectName("btn_success")
         self._sync_btn.setFixedHeight(34)
         self._sync_btn.setToolTip(
-            "Send all goal positions to the group's servos in ONE bus packet.\n"
-            "All servos start moving simultaneously."
+            "Send all goal positions to the group's servos as rapid sequential\n"
+            "writes (20 ms apart), so each servo acknowledges its command."
         )
         self._sync_btn.clicked.connect(self._fire_sync_move)
         layout.addWidget(self._sync_btn)

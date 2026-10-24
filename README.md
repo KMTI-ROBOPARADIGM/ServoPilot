@@ -154,35 +154,44 @@ You can toggle the API directly within the app by clicking the `API ▶` button 
 4. **Move**: In the "Monitor" tab, toggle "Torque: ON". Use the Goal Position slider to move the motor.
 
 ### Advanced Usage: Synchronized Movements
-To move multiple servos at the exact same time:
+To move several servos together:
 1. Navigate to the **Sync Control** tab.
 2. Ensure you have scanned the bus for at least two servos.
 3. Use the unified slider handles to define target positions for your robotic leg or arm.
-4. Click **Write Sync Pose**; all servos will actuate simultaneously based on a single multi-device command packet.
+4. Click **Sync Move**. The goal positions are sent as rapid sequential writes, one per servo with a 20 ms guard delay, so every servo acknowledges its command on the shared bus. The servos therefore don't start at the same instant: with n servos, the last one gets its command about 20 ms × (n − 1) after the first. (The driver also includes a `GroupSyncWrite` packet builder, but the app does not use it for group moves.)
 
 ### Pro Tips
 - **Use the Packet Console**: Toggle the "Console ▲" button at the bottom of the window to see raw hexadecimal packet logs flowing in and out of the hardware.
-- **Fast Plotting Filter**: During heavy network/serial polling, click the "Clear" button on the Real-Time Graph to drop historical data and stabilize CPU usage.
-- **Identify via Step Test**: Not sure what your PID constants do? Go to the PID tab and hit "Step Test (+100)" to plot a rapid impulse response to measure overshoot.
+- **Clearing the Graph**: The **✕ Clear** button on the Real-Time Graph drops the stored samples. You don't need it for long sessions, because the plot buffers are bounded (see Known limitations).
+- **Identify via Step Test**: Not sure what your PID constants do? Go to the PID tab and click **▶ Trigger Step Test (+200 steps)**. It commands a fixed step of A = 200 encoder steps and plots the step response, with overshoot, rise time, settling time and steady-state error.
 
 ---
 
 ## API REFERENCE
-If the internal API server is enabled, you can command ServoPilot remotely using REST.
-**Base URL**: `http://localhost:8765`  
-**Authentication**: None internally (Designed for localhost inter-process communication)
+Click **API ▶** in the status bar to start the FastAPI server. It binds to `127.0.0.1:8765` (loopback only) and serves REST endpoints plus a WebSocket telemetry channel. Commands are queued and run by the GUI every 100 ms, so the response means "queued", not "done". Interactive docs are at `http://localhost:8765/docs` while the server is running.
 
-| Method | Endpoint | Description | Auth Required | Request Body | Response |
-| --- | --- | --- | --- | --- | --- |
-| GET | `/servos` | Returns ID list for all known servos | No | None | `{"servos": [1, 2, 3]}` |
-| GET | `/telemetry/{id}` | Fetches last-seen telemetry stats | No | None | `{"position": 2048, ...}` |
-| POST | `/servo/{id}/position`| Move ID to a specific coordinate | No | `{"position": #, "speed": #}` | `{"status": "ok"}` |
-| POST | `/emergency_stop` | Disable torque across all hardware | No | None | `{"action": "estop"}` |
+**Base URL**: `http://localhost:8765`  
+**Authentication**: Optional API key, disabled by default. When a key is set, every REST request must send it in the `X-API-Key` header, or it gets `401`. There is no GUI field for it yet; set it in code with `ApiBridge.set_api_key("...")` before starting the server. The server is meant for scripts on the same computer or a trusted lab network, not for external networks.
+
+| Method | Endpoint | Description | Request Body | Response |
+| --- | --- | --- | --- | --- |
+| GET | `/servos` | List connected servos with their latest telemetry | None | `{"servos": [{"id": 1, "position": 2048, ...}], "count": 1}` |
+| GET | `/servos/{id}/state` | Latest telemetry for one servo (`404` if none) | None | `{"id": 1, "position": 2048, "velocity": 0, ..., "timestamp": ...}` |
+| POST | `/servos/{id}/position` | Move one servo to a goal position | `{"position": 2048, "speed": 1000}` (`speed` optional) | `{"status": "queued", "servo_id": 1, "position": 2048}` |
+| POST | `/servos/{id}/torque` | Enable or disable torque | `{"enable": true}` | `{"status": "queued", "servo_id": 1, "torque": true}` |
+| POST | `/servos/{id}/mode` | Set operating mode | `{"mode": "position"}` (`position`, `wheel`, `pwm`, `step`) | `{"status": "queued", "servo_id": 1, "mode": "position"}` |
+| GET | `/servos/groups` | List servo groups defined in the Sync tab | None | `{"groups": {...}}` |
+| POST | `/servos/groups/{name}/sync_move` | Group move (sequential writes, as in the Sync tab) | `[{"id": 1, "position": 2048}, {"id": 2, "position": 1024}]` | `{"status": "queued", "group": "...", "positions": {...}}` |
+| POST | `/servos/home` | Move servos to the saved home pose | None | `{"status": "queued"}` |
+| POST | `/servos/emergency_stop` | Disable torque on all servos | None | `{"status": "queued"}` |
+| WS | `/ws/telemetry` | Streams telemetry for all servos at 10 Hz; also accepts `set_position`, `set_torque`, `emergency_stop` and `home` commands as JSON | See below | `{"timestamp": ..., "servos": {"1": {"position": ..., ...}}}` |
+
+WebSocket command example: `{"command": "set_position", "id": 1, "position": 2048}`. The WebSocket does not check the API key.
 
 #### Example API Request (Move Servo)
 ```bash
 # Example request
-curl -X POST http://localhost:8765/servo/1/position \
+curl -X POST http://localhost:8765/servos/1/position \
   -H "Content-Type: application/json" \
   -d '{"position": 2048, "speed": 1000}'
 ```
@@ -190,12 +199,8 @@ curl -X POST http://localhost:8765/servo/1/position \
 // Example response
 {
   "status": "queued",
-  "command": {
-    "action": "set_position",
-    "id": 1,
-    "position": 2048,
-    "speed": 1000
-  }
+  "servo_id": 1,
+  "position": 2048
 }
 ```
 
@@ -296,7 +301,7 @@ We strongly welcome feedback and contributions from the community. If you build 
 - [ ] 🕹️ Physical joystick map bindings integration
 
 **Known limitations:**
-- Graphing history will slow down the CPU if allowed to run continuously at 20Hz for more than 4 hours without manual clearing.
+- The Real-Time Graph keeps at most 10,000 samples per metric per servo (`collections.deque` with a fixed `maxlen`, about 8 minutes at 20 Hz), so plot memory doesn't grow with session length. Memory use over multi-hour sessions has not been measured.
 
 ---
 
