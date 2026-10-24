@@ -5,6 +5,10 @@
 </h1>
 <h4 align="center">A comprehensive desktop application designed for high-performance management and control of ST3215 serial bus servos.</h4>
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
+
 
 ServoPilot eliminates the complexity of interacting with serial bus servos by providing a visual, professional-grade interface. Whether you're configuring IDs, tuning PID loops, or orchestrating multi-servo movements via external scripts, everything is available in a clean, real-time desktop dashboard. Simply connect, scan, and pilot your robotic creations.
 
@@ -26,6 +30,7 @@ ServoPilot eliminates the complexity of interacting with serial bus servos by pr
 - [REPRODUCING THE INDICON 2026 PAPER](#reproducing-the-indicon-2026-paper)
 - [CONTRIBUTING](#contributing)
 - [ROADMAP](#roadmap)
+- [LICENSE](#license)
 
 ---
 
@@ -304,6 +309,11 @@ We strongly welcome feedback and contributions from the community. If you build 
 - The Real-Time Graph keeps at most 10,000 samples per metric per servo (`collections.deque` with a fixed `maxlen`, about 8 minutes at 20 Hz), so plot memory doesn't grow with session length. Memory use over multi-hour sessions has not been measured.
 
 ---
+
+## LICENSE
+ServoPilot is released under the MIT License. See [LICENSE](LICENSE) for details.
+
+**Third-party code:** the `st3215/` servo driver is based on [python-st3215](https://github.com/Mickael-Roger/python-st3215) by Mickael Roger and remains under the Apache License 2.0; see [st3215/LICENSE](st3215/LICENSE). `setup.py` and `setup.cfg` package that driver and keep its Apache licence metadata.
 
 
 
